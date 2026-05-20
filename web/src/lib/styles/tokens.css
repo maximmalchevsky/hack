@@ -1,0 +1,100 @@
+/*
+ * Дизайн-токены WorkTime Sync.
+ * Источник правды: tmp/worktime-sync-prototype_2.html.
+ * Не редактируем "на глаз" — синхронизируем с прототипом при изменениях.
+ */
+
+:root,
+[data-theme='light'] {
+	--bg: #fafaf7;
+	--surface: #ffffff;
+	--surface-2: #f4f3ee;
+	--surface-3: #eceae3;
+
+	--border: rgba(0, 0, 0, 0.08);
+	--border-2: rgba(0, 0, 0, 0.14);
+	--border-3: rgba(0, 0, 0, 0.22);
+
+	--text: #1a1a19;
+	--text-2: #5f5e5a;
+	--text-3: #888780;
+
+	--info-bg: #e6f1fb;
+	--info-border: #b5d4f4;
+	--info-text: #0c447c;
+	--info-strong: #185fa5;
+
+	--success-bg: #eaf3de;
+	--success-border: #c0dd97;
+	--success-text: #27500a;
+	--success-strong: #639922;
+
+	--warning-bg: #faeeda;
+	--warning-border: #fac775;
+	--warning-text: #633806;
+	--warning-strong: #ba7517;
+
+	--danger-bg: #fcebeb;
+	--danger-border: #f7c1c1;
+	--danger-text: #791f1f;
+	--danger-strong: #a32d2d;
+
+	--purple-bg: #eeedfe;
+	--purple-text: #3c3489;
+
+	--teal-bg: #e1f5ee;
+	--teal-text: #085041;
+
+	--radius-sm: 4px;
+	--radius-md: 8px;
+	--radius-lg: 12px;
+	--radius-xl: 16px;
+
+	--shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+	--shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+	--shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.1);
+
+	--sidebar-w: 220px;
+	--header-h: 56px;
+}
+
+[data-theme='dark'] {
+	--bg: #14140e;
+	--surface: #1f1f18;
+	--surface-2: #2a2a22;
+	--surface-3: #35352c;
+
+	--border: rgba(255, 255, 255, 0.08);
+	--border-2: rgba(255, 255, 255, 0.14);
+	--border-3: rgba(255, 255, 255, 0.22);
+
+	--text: #f0efe8;
+	--text-2: #b4b2a9;
+	--text-3: #888780;
+
+	--info-bg: #042c53;
+	--info-border: #0c447c;
+	--info-text: #b5d4f4;
+	--info-strong: #85b7eb;
+
+	--success-bg: #173404;
+	--success-border: #27500a;
+	--success-text: #c0dd97;
+	--success-strong: #97c459;
+
+	--warning-bg: #412402;
+	--warning-border: #633806;
+	--warning-text: #fac775;
+	--warning-strong: #ef9f27;
+
+	--danger-bg: #501313;
+	--danger-border: #791f1f;
+	--danger-text: #f7c1c1;
+	--danger-strong: #f09595;
+
+	--purple-bg: #26215c;
+	--purple-text: #cecbf6;
+
+	--teal-bg: #04342c;
+	--teal-text: #9fe1cb;
+}

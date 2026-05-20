@@ -1,0 +1,29 @@
+@import '@tabler/icons-webfont/dist/tabler-icons.min.css';
+@import './lib/styles/tokens.css';
+@import './lib/styles/components.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+	* {
+		box-sizing: border-box;
+	}
+	html,
+	body {
+		height: 100%;
+	}
+	body {
+		font-family: theme('fontFamily.sans');
+		font-size: 14px;
+		line-height: 1.5;
+		color: var(--text);
+		background: var(--bg);
+		-webkit-font-smoothing: antialiased;
+	}
+	a {
+		color: inherit;
+		text-decoration: none;
+	}
+}
