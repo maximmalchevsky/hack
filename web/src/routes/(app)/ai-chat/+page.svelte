@@ -56,7 +56,8 @@
 		| 'start_notify_stale' // «Разослать запросы устаревшим»
 		| 'confirm_notify_stale'
 		| 'pick_export' // открыть меню «Что выгрузить?»
-		| 'do_export' // запустить выгрузку (payload.kind)
+		| 'pick_format' // спросить формат (xlsx/pdf) для выбранного пресета
+		| 'do_export' // запустить выгрузку (payload.kind + format)
 		| 'start_reschedule' // «Перенести мою встречу»
 		| 'pick_meeting_to_move' // выбрать какую встречу переносить
 		| 'do_reschedule' // финальный перенос (payload.meeting_id + start/end)
@@ -435,7 +436,7 @@
 			content = label
 				? `Готов выгрузить в Excel: **${label}**.`
 				: 'Готов выгрузить в Excel. Выбери, что именно.';
-			actions = exportActions(intent.hint);
+			actions = exportActions(intent.hint, intent.kinds);
 		} else if (intent.kind === 'reschedule') {
 			// Без промежуточного «Поехали» — раз юзер уже сказал «перенеси»,
 			// сразу подбираем варианты. Дальше будет ИЛИ выбор встречи (если их
@@ -472,7 +473,7 @@
 		| { kind: 'none' }
 		| { kind: 'meeting'; durationMin: number }
 		| { kind: 'notify_stale' }
-		| { kind: 'export'; hint: ExportHint }
+		| { kind: 'export'; hint: ExportHint; kinds?: string[] }
 		| { kind: 'reschedule' };
 
 	function detectIntent(text: string): Intent {
@@ -528,59 +529,97 @@
 		const exportTriggers = ['выгруз', 'эксел', 'excel', 'xlsx', 'таблиц', 'экспорт'];
 		if (exportTriggers.some((tr) => t.includes(tr))) {
 			let hint: ExportHint = 'any';
-			if (/отпуск|командиров|больнич|отсутств/i.test(t)) hint = 'vacations';
-			else if (/устаревш|неактуальн|давно не обнов/i.test(t)) hint = 'stale';
+			let kinds: string[] | undefined;
+			// Внутри «отпуск/командировка/больничный/отсутствие» выделяем конкретный тип,
+			// чтобы выгрузить ТОЛЬКО его, а не все исключения подряд.
+			if (/отпуск|командиров|больнич|отсутств|личные часы/i.test(t)) {
+				hint = 'vacations';
+				const picked: string[] = [];
+				if (/командиров/i.test(t)) picked.push('business_trip');
+				if (/больнич/i.test(t)) picked.push('sick_leave');
+				if (/отпуск/i.test(t)) picked.push('vacation');
+				if (/личные час/i.test(t)) picked.push('personal_hours');
+				if (picked.length > 0) kinds = picked;
+			} else if (/устаревш|неактуальн|давно не обнов/i.test(t)) hint = 'stale';
 			else if (/конфликт|вне рабочих/i.test(t)) hint = 'conflicts';
 			else if (/сотрудник|всех людей|справочник/i.test(t)) hint = 'employees';
-			return { kind: 'export', hint };
+			return { kind: 'export', hint, kinds };
 		}
 
 		return { kind: 'none' };
 	}
 
-	function exportActions(hint: ExportHint): MsgAction[] {
-		const all: MsgAction[] = [
+	function exportActions(hint: ExportHint, kinds?: string[]): MsgAction[] {
+		// Если запрошен конкретный тип отсутствия — primary-кнопка с явным фильтром.
+		const all: MsgAction[] = [];
+		if (kinds && kinds.length > 0) {
+			const labelMap: Record<string, string> = {
+				vacation: 'Только отпуска',
+				business_trip: 'Только командировки',
+				sick_leave: 'Только больничные',
+				personal_hours: 'Только личные часы'
+			};
+			const iconMap: Record<string, string> = {
+				vacation: 'ti-beach',
+				business_trip: 'ti-briefcase',
+				sick_leave: 'ti-thermometer',
+				personal_hours: 'ti-clock'
+			};
+			const label = kinds.map((k) => labelMap[k] ?? k).join(' + ');
+			all.push({
+				label,
+				icon: iconMap[kinds[0]] ?? 'ti-beach',
+				variant: 'primary',
+				kind: 'pick_format',
+				payload: { kind: 'upcoming_vacations', kinds }
+			});
+		}
+
+		all.push(
 			{
-				label: 'Скоро в отпуске',
+				label: 'Все отпуска/больничные/командировки',
 				icon: 'ti-beach',
-				kind: 'do_export',
+				kind: 'pick_format',
 				payload: { kind: 'upcoming_vacations' }
 			},
 			{
 				label: 'Устаревшие профили',
 				icon: 'ti-clock-exclamation',
-				kind: 'do_export',
+				kind: 'pick_format',
 				payload: { kind: 'stale_profiles' }
 			},
 			{
 				label: 'Конфликты',
 				icon: 'ti-alert-triangle',
-				kind: 'do_export',
+				kind: 'pick_format',
 				payload: { kind: 'conflicts' }
 			},
 			{
 				label: 'Все сотрудники',
 				icon: 'ti-users',
-				kind: 'do_export',
+				kind: 'pick_format',
 				payload: { kind: 'all_employees' }
 			},
 			{ label: 'Отмена', variant: 'ghost', kind: 'cancel' }
-		];
-		// Если есть hint — выделяем релевантную кнопку как primary.
-		const targetKind =
-			hint === 'vacations'
-				? 'upcoming_vacations'
-				: hint === 'stale'
-					? 'stale_profiles'
-					: hint === 'conflicts'
-						? 'conflicts'
-						: hint === 'employees'
-							? 'all_employees'
-							: '';
-		if (targetKind) {
-			for (const a of all) {
-				if (a.payload && a.payload.kind === targetKind) {
-					a.variant = 'primary';
+		);
+
+		// Если конкретный тип не выбран, но есть hint — primary-им релевантный пресет.
+		if (!kinds || kinds.length === 0) {
+			const targetKind =
+				hint === 'vacations'
+					? 'upcoming_vacations'
+					: hint === 'stale'
+						? 'stale_profiles'
+						: hint === 'conflicts'
+							? 'conflicts'
+							: hint === 'employees'
+								? 'all_employees'
+								: '';
+			if (targetKind) {
+				for (const a of all) {
+					if (a.payload && a.payload.kind === targetKind) {
+						a.variant = 'primary';
+					}
 				}
 			}
 		}
@@ -624,8 +663,20 @@
 			case 'pick_export':
 				await flowExportPick();
 				break;
+			case 'pick_format':
+				await flowFormatPick(
+					action.payload?.kind as string,
+					action.label,
+					action.payload?.kinds as string[] | undefined
+				);
+				break;
 			case 'do_export':
-				await flowExportRun(action.payload?.kind as string, action.label);
+				await flowExportRun(
+					action.payload?.kind as string,
+					action.label,
+					(action.payload?.format as 'xlsx' | 'pdf') ?? 'xlsx',
+					action.payload?.kinds as string[] | undefined
+				);
 				break;
 			case 'start_reschedule':
 				await flowRescheduleStart();
@@ -792,9 +843,9 @@
 			newMsg({
 				role: 'assistant',
 				content:
-					'Каких сотрудников пинговать?\n' +
-					'• «всех просроченных» — порог 60 дней (по умолчанию).\n' +
-					'• «только критических» — порог 90 дней.',
+					'Кому отправить запрос на обновление графика?\n' +
+					'• Всем, у кого профиль не обновлялся более 60 дней.\n' +
+					'• Только тем, у кого больше 90 дней — критически устаревшие.',
 				actions: [
 					{
 						label: 'Всех (>60 дней)',
@@ -1043,25 +1094,84 @@
 		}
 	}
 
-	async function flowExportRun(kind: string, label: string) {
+	// Шаг 2 экспорт-флоу: после выбора пресета спрашиваем формат (Excel или PDF).
+	async function flowFormatPick(kind: string, label: string, kinds?: string[]) {
+		messages.push(
+			newMsg({
+				role: 'assistant',
+				content: `В каком формате выгрузить «${label}»?`,
+				actions: [
+					{
+						label: 'Excel (.xlsx)',
+						variant: 'primary',
+						icon: 'ti-table',
+						kind: 'do_export',
+						payload: { kind, label, kinds, format: 'xlsx' }
+					},
+					{
+						label: 'PDF',
+						icon: 'ti-file-type-pdf',
+						kind: 'do_export',
+						payload: { kind, label, kinds, format: 'pdf' }
+					},
+					{ label: 'Отмена', variant: 'ghost', kind: 'cancel' }
+				]
+			})
+		);
+		await tick();
+		scrollDown();
+	}
+
+	async function flowExportRun(
+		kind: string,
+		label: string,
+		format: 'xlsx' | 'pdf',
+		kinds?: string[]
+	) {
 		const placeholderIdx = messages.length;
 		messages.push(
 			newMsg({
 				role: 'assistant',
-				content: `Готовлю выгрузку «${label}»…`
+				content: `Готовлю ${format === 'pdf' ? 'PDF' : 'Excel'} «${label}»…`
 			})
 		);
 		await tick();
 		scrollDown();
 
 		try {
+			if (format === 'pdf') {
+				// PDF — берём JSON-датасет и рендерим тем же путём, что и на /reports.
+				const tok = getAccessToken() ?? '';
+				const params = new URLSearchParams({ format: 'json' });
+				if (kinds && kinds.length > 0) params.set('kinds', kinds.join(','));
+				const resp = await fetch(
+					`${backendURL()}/api/v1/exports/${kind}?${params.toString()}`,
+					{ headers: tok ? { Authorization: `Bearer ${tok}` } : {} }
+				);
+				if (!resp.ok) throw new Error(`status ${resp.status}`);
+				const ds = (await resp.json()) as {
+					kind: string;
+					title: string;
+					headers: string[];
+					rows: unknown[][];
+				};
+				const filename = await renderPDFInline(ds, kind, label);
+				messages[placeholderIdx] = {
+					...messages[placeholderIdx],
+					content: `Готово. PDF **${filename}** сохранён (${ds.rows.length} записей).`
+				};
+				return;
+			}
+
+			// xlsx — старый путь.
 			const tok = getAccessToken() ?? '';
-			const resp = await fetch(`${backendURL()}/api/v1/exports/${kind}`, {
+			const params = new URLSearchParams();
+			if (kinds && kinds.length > 0) params.set('kinds', kinds.join(','));
+			const query = params.toString() ? `?${params.toString()}` : '';
+			const resp = await fetch(`${backendURL()}/api/v1/exports/${kind}${query}`, {
 				headers: tok ? { Authorization: `Bearer ${tok}` } : {}
 			});
-			if (!resp.ok) {
-				throw new Error(`status ${resp.status}`);
-			}
+			if (!resp.ok) throw new Error(`status ${resp.status}`);
 			const blob = await resp.blob();
 			const cd = resp.headers.get('Content-Disposition') ?? '';
 			const m = cd.match(/filename="?([^"]+)"?/);
@@ -1086,6 +1196,98 @@
 				content: `Не удалось выгрузить: ${errStr(e)}`
 			};
 		}
+	}
+
+	// Лёгкий рендер PDF — тот же подход что на /reports, но завёрнут в локальную функцию.
+	async function renderPDFInline(
+		ds: { title: string; headers: string[]; rows: unknown[][] },
+		kind: string,
+		label: string
+	): Promise<string> {
+		if (typeof window === 'undefined') return 'pdf';
+		const mod = await import('html2pdf.js');
+		const html2pdf = mod.default;
+
+		const dateStr = new Date().toISOString().slice(0, 10);
+		const filename = `workie-${kind}-${dateStr}.pdf`;
+
+		const container = document.createElement('div');
+		container.style.cssText =
+			'font-family: Arial, Helvetica, sans-serif; color:#0f172a; padding:24px; width:1024px; word-spacing:0.1em;';
+		container.innerHTML = buildPDFHtml(ds, label);
+		document.body.appendChild(container);
+
+		try {
+			await html2pdf()
+				.from(container)
+				.set({
+					margin: [10, 12, 12, 12],
+					filename,
+					image: { type: 'jpeg', quality: 0.96 },
+					html2canvas: { scale: 2, useCORS: true },
+					jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' }
+				})
+				.save();
+		} finally {
+			container.remove();
+		}
+		return filename;
+	}
+
+	function buildPDFHtml(
+		ds: { title: string; headers: string[]; rows: unknown[][] },
+		label: string
+	): string {
+		const now = new Date();
+		const dateStr = now.toLocaleDateString('ru', { day: 'numeric', month: 'long', year: 'numeric' });
+		const timeStr = now.toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
+		const esc = (s: string) =>
+			s
+				.replaceAll('&', '&amp;')
+				.replaceAll('<', '&lt;')
+				.replaceAll('>', '&gt;')
+				.replaceAll('"', '&quot;');
+		const head = ds.headers
+			.map(
+				(h) =>
+					`<th style="text-align:left;padding:8px 10px;background:#f1f5f9;border-bottom:1px solid #cbd5e1;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#475569;">${esc(h)}</th>`
+			)
+			.join('');
+		const rowsHtml = ds.rows
+			.map((row, idx) => {
+				const cells = row
+					.map(
+						(v) =>
+							`<td style="padding:6px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;color:#0f172a;vertical-align:top;">${esc(String(v ?? ''))}</td>`
+					)
+					.join('');
+				const bg = idx % 2 === 0 ? '#ffffff' : '#fafafa';
+				return `<tr style="background:${bg};">${cells}</tr>`;
+			})
+			.join('');
+		const empty =
+			ds.rows.length === 0
+				? `<div style="padding:24px;text-align:center;color:#64748b;font-size:13px;">Нет данных</div>`
+				: '';
+		return `
+			<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;border-bottom:2px solid #3b82f6;padding-bottom:10px;">
+				<div>
+					<div style="font-size:11px;color:#64748b;letter-spacing:.5px;text-transform:uppercase;">Workie · отчёт</div>
+					<div style="font-size:22px;font-weight:700;color:#0f172a;margin-top:2px;word-spacing:0.25em;">${esc(label).replace(/ /g, '&nbsp;')}</div>
+					<div style="font-size:12px;color:#475569;margin-top:4px;">${esc(ds.title).replace(/ /g, '&nbsp;')}</div>
+				</div>
+				<div style="text-align:right;font-size:11px;color:#64748b;">
+					Сформировано<br/>
+					<span style="color:#0f172a;font-weight:600;">${dateStr}, ${timeStr}</span><br/>
+					Записей: <b>${ds.rows.length}</b>
+				</div>
+			</div>
+			${empty}
+			<table style="width:100%;border-collapse:collapse;">
+				<thead><tr>${head}</tr></thead>
+				<tbody>${rowsHtml}</tbody>
+			</table>
+		`;
 	}
 
 	function formatBytes(b: number): string {

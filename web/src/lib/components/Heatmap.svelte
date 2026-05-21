@@ -48,13 +48,15 @@
 			left: -9999,
 			top: -9999
 		};
+		// Позиционируем в next-tick, КОГДА tooltipEl уже отрендерен.
+		// requestAnimationFrame вместо $effect — нет реактивного цикла, нет лагов.
+		requestAnimationFrame(positionTooltip);
 	}
 	function onLeave() {
 		hover = null;
 	}
 
-	// После рендера тултипа измеряем его и кладём в видимую область.
-	$effect(() => {
+	function positionTooltip() {
 		if (!hover || !tooltipEl) return;
 		const r = tooltipEl.getBoundingClientRect();
 		const PAD = 8;
@@ -69,10 +71,8 @@
 		let top = hover.anchorTop - r.height - GAP;
 		if (top < PAD) top = hover.anchorBottom + GAP;
 
-		if (left !== hover.left || top !== hover.top) {
-			hover = { ...hover, left, top };
-		}
-	});
+		hover = { ...hover, left, top };
+	}
 </script>
 
 <div class="heatmap-hours">

@@ -317,7 +317,7 @@
 							</div>
 						{/if}
 					</div>
-					<Button size="sm" icon="ti-refresh" onclick={() => sync(i.id)}>Синк</Button>
+					<Button size="sm" icon="ti-refresh" onclick={() => sync(i.id)}>Синхронизировать</Button>
 					<Button size="sm" variant="ghost" icon="ti-trash" onclick={() => remove(i.id)}>
 						Удалить
 					</Button>

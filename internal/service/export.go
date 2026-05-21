@@ -86,6 +86,10 @@ type DatasetOptions struct {
 	// Колонки — оставляем только эти headers (по имени, регистрозависимо).
 	// Если пусто — все колонки исходного пресета.
 	Columns []string
+	// Типы исключений (применяется к vacations):
+	// vacation | sick_leave | business_trip | personal_hours | custom.
+	// Пусто — все.
+	Kinds []string
 }
 
 // BuildDataset — то же что Build, но в JSON-формате (без XLSX-сериализации).
@@ -204,12 +208,16 @@ func (s *ExportService) datasetUpcomingVacations(ctx context.Context, opts Datas
 		to = *opts.To
 	}
 
-	// Базовый запрос с переменным набором условий (departments — необязательно).
+	// Базовый запрос с переменным набором условий (departments / kinds — необязательны).
 	args := []any{from, to}
-	deptClause := ""
+	extra := ""
 	if len(opts.Departments) > 0 {
 		args = append(args, opts.Departments)
-		deptClause = " AND e.department = ANY($3::text[])"
+		extra += fmt.Sprintf(" AND e.department = ANY($%d::text[])", len(args))
+	}
+	if len(opts.Kinds) > 0 {
+		args = append(args, opts.Kinds)
+		extra += fmt.Sprintf(" AND te.kind::text = ANY($%d::text[])", len(args))
 	}
 
 	rows, err := s.pool.Query(ctx, `
@@ -218,7 +226,7 @@ func (s *ExportService) datasetUpcomingVacations(ctx context.Context, opts Datas
 		FROM time_exceptions te
 		JOIN employees e ON e.id = te.employee_id
 		JOIN users u     ON u.id = e.user_id
-		WHERE te.end_at >= $1 AND te.start_at <= $2`+deptClause+`
+		WHERE te.end_at >= $1 AND te.start_at <= $2`+extra+`
 		ORDER BY te.start_at
 	`, args...)
 	if err != nil {

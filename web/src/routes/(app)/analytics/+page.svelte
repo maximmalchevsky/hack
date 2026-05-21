@@ -710,7 +710,7 @@
 			</div>
 
 			<div class="section grid-2" style="gap: 16px;">
-				<Card title="Динамика A за 8 недель" subtitle="Актуальность профилей по неделям (в скоупе выбранных команд)" metricLetter="A">
+				<Card title="Динамика A за 8 недель" subtitle="Актуальность профилей по неделям — по выбранным командам" metricLetter="A">
 					<EChart option={teamsTrendOption} height="280px" />
 				</Card>
 				<Card title="Конфликты по дням недели" subtitle="За 30 дней">
@@ -728,7 +728,7 @@
 						<EChart option={teamsRiskOption} height={teamsRisk.length * 36 + 60 + 'px'} />
 					{/if}
 				</Card>
-				<Card title="Распределение по группам" subtitle="В скоупе">
+				<Card title="Распределение по группам" subtitle="Сколько актуальных, сколько устаревших">
 					<EChart option={teamsGroupsOption} height="300px" />
 				</Card>
 			</div>

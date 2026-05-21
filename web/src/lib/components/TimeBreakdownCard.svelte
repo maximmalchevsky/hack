@@ -1,7 +1,6 @@
 <script lang="ts">
 	// TimeBreakdownCard — «Куда уходит время» на /profile.
 	// Donut + список топ-категорий встреч за период (7 / 30 / 90 дней).
-	import { onMount } from 'svelte';
 	import Card from './Card.svelte';
 	import Badge from './Badge.svelte';
 	import EChart from './EChart.svelte';
@@ -27,23 +26,18 @@
 	// Палитра под категории. Берём с разворотом для контраста.
 	const PALETTE = ['#6366f1', '#22c55e', '#f59e0b', '#ec4899', '#14b8a6', '#94a3b8'];
 
-	onMount(async () => {
-		await reload();
-	});
-
-	async function setDays(d: number) {
+	function setDays(d: number) {
 		if (d === days) return;
-		days = d;
-		await reload();
+		days = d; // изменение пере-триггерит $effect ниже, который сам перезагрузит.
 	}
 
-	async function reload() {
+	async function load(currentTeam: string | undefined, currentDays: number) {
 		loading = true;
 		error = null;
 		try {
-			data = teamID
-				? await getTeamTimeBreakdown(teamID, days)
-				: await getMyTimeBreakdown(days);
+			data = currentTeam
+				? await getTeamTimeBreakdown(currentTeam, currentDays)
+				: await getMyTimeBreakdown(currentDays);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
@@ -51,10 +45,12 @@
 		}
 	}
 
-	// Если родитель сменил teamID — перезагружаем.
+	// Загрузка при mount + при смене teamID / days.
+	// ВАЖНО: внутри effect не читаем `loading` и `data` — иначе будет цикл.
 	$effect(() => {
-		void teamID;
-		if (!loading) reload();
+		const t = teamID;
+		const d = days;
+		void load(t, d);
 	});
 
 	const donutOption = $derived.by(() => {

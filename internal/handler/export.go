@@ -99,6 +99,9 @@ func parseDatasetOptions(c fiber.Ctx) service.DatasetOptions {
 	if v := c.Query("columns"); v != "" {
 		opts.Columns = splitCSV(v)
 	}
+	if v := c.Query("kinds"); v != "" {
+		opts.Kinds = splitCSV(v)
+	}
 	return opts
 }
 
@@ -123,5 +126,6 @@ func splitCSV(v string) []string {
 }
 
 func hasFilters(opts service.DatasetOptions) bool {
-	return opts.From != nil || opts.To != nil || len(opts.Departments) > 0 || len(opts.Columns) > 0
+	return opts.From != nil || opts.To != nil ||
+		len(opts.Departments) > 0 || len(opts.Columns) > 0 || len(opts.Kinds) > 0
 }

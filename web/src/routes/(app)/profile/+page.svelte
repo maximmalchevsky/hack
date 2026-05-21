@@ -330,7 +330,7 @@
 	{/if}
 
 	<div class="grid-2-1">
-		<Card title="Рабочие часы" subtitle="Времена в формате 24-часовой">
+		<Card title="Рабочие часы" subtitle="График работы">
 			<div class="space-y-2">
 				{#each DAYS as d (d.key)}
 					<div class="flex items-center gap-3">

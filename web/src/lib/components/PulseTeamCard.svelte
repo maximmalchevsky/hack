@@ -60,13 +60,13 @@
 {:else if loading}
 	<!-- skeleton — не отрисовываем чтобы не мигало -->
 {:else if error}
-	<Card title="Pulse команды" subtitle="Не удалось загрузить">
+	<Card title="Настроение команды" subtitle="Не удалось загрузить">
 		<div class="text-text-3 text-sm" style="padding: 8px 0;">{error}</div>
 	</Card>
 {:else if data && data.members.length > 0}
 	<Card
-		title="Pulse команды"
-		subtitle="Самочувствие сотрудников за последний цикл (раз в 2 недели)"
+		title="Настроение команды"
+		subtitle="Самочувствие сотрудников за последние 2 недели"
 	>
 		<div class="ptc-summary">
 			<div class="ptc-stat">

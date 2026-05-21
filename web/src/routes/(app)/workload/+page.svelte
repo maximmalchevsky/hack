@@ -85,7 +85,8 @@
 				lines.push(`• ${title} (${range})`);
 			}
 			if (state === 'conflict') {
-				lines.push('⚠️ вне рабочего графика');
+				// Различаем double-booking от события вне графика.
+				lines.push(eventsOverlap(det.events) ? '⚠️ две встречи одновременно' : '⚠️ вне рабочего графика');
 			}
 			return lines.join('\n');
 		}
@@ -104,6 +105,20 @@
 		const desc = stateDescription(state, det?.note);
 		if (desc) lines.push(desc);
 		return lines.join('\n');
+	}
+
+	function eventsOverlap(evs: { start_at: string; end_at: string }[]): boolean {
+		if (evs.length < 2) return false;
+		for (let i = 0; i < evs.length; i++) {
+			for (let j = i + 1; j < evs.length; j++) {
+				const aStart = new Date(evs[i].start_at).getTime();
+				const aEnd = new Date(evs[i].end_at).getTime();
+				const bStart = new Date(evs[j].start_at).getTime();
+				const bEnd = new Date(evs[j].end_at).getTime();
+				if (aStart < bEnd && bStart < aEnd) return true;
+			}
+		}
+		return false;
 	}
 
 	function stateDescription(state: string, note?: string): string {

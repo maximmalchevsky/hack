@@ -160,9 +160,29 @@
 			.map((e) => `• ${e.title || 'без названия'} · ${fmtTime(e.start_at)}–${fmtTime(e.end_at)}`)
 			.join('\n');
 		if (state === 'conflict') {
-			return `${header}\nКонфликт — событие вне рабочих часов:\n${evLines}`;
+			// Различаем два кейса: double-booking (события пересекаются между собой)
+			// vs событие вне рабочих часов.
+			const reason = eventsOverlap(evs)
+				? 'Пересечение встреч (одновременно):'
+				: 'Конфликт — событие вне рабочих часов:';
+			return `${header}\n${reason}\n${evLines}`;
 		}
 		return `${header}\nЗанят:\n${evLines}`;
+	}
+
+	// Реально пересекаются ли события между собой по времени.
+	function eventsOverlap(evs: { start_at: string; end_at: string }[]): boolean {
+		if (evs.length < 2) return false;
+		for (let i = 0; i < evs.length; i++) {
+			for (let j = i + 1; j < evs.length; j++) {
+				const aStart = new Date(evs[i].start_at).getTime();
+				const aEnd = new Date(evs[i].end_at).getTime();
+				const bStart = new Date(evs[j].start_at).getTime();
+				const bEnd = new Date(evs[j].end_at).getTime();
+				if (aStart < bEnd && bStart < aEnd) return true;
+			}
+		}
+		return false;
 	}
 
 	const tooltipFn = $derived((ri: number, ci: number, state: HeatmapCellState) => {

@@ -189,16 +189,6 @@
 						<div class="text-text-2 text-sm" style="margin-bottom: 8px;">
 							{r.explanation}
 						</div>
-						{#if r.evidence}
-							<details>
-								<summary class="text-text-3 text-xs cursor-pointer">evidence</summary>
-								<pre class="text-text-2 text-xs" style="margin-top: 6px;">{JSON.stringify(
-										r.evidence,
-										null,
-										2
-									)}</pre>
-							</details>
-						{/if}
 					</div>
 					<div class="flex flex-col gap-1">
 						<Button size="sm" variant="primary" icon="ti-check" onclick={() => apply(r.id)}

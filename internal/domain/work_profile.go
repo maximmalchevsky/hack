@@ -27,15 +27,15 @@ type DaysOfWeek struct {
 // WorkProfile — версионированный рабочий профиль сотрудника.
 // Активная запись — valid_to == nil. Старые — историческая выборка.
 type WorkProfile struct {
-	ID          uuid.UUID
-	EmployeeID  uuid.UUID
-	ValidFrom   time.Time
-	ValidTo     *time.Time
-	DaysOfWeek  DaysOfWeek
-	Timezone    string
-	WorkFormat  WorkFormat
-	Source      string
-	CreatedAt   time.Time
+	ID         uuid.UUID  `json:"id"`
+	EmployeeID uuid.UUID  `json:"employee_id"`
+	ValidFrom  time.Time  `json:"valid_from"`
+	ValidTo    *time.Time `json:"valid_to,omitempty"`
+	DaysOfWeek DaysOfWeek `json:"days_of_week"`
+	Timezone   string     `json:"timezone"`
+	WorkFormat WorkFormat `json:"work_format"`
+	Source     string     `json:"source"`
+	CreatedAt  time.Time  `json:"created_at"`
 }
 
 // IsActive — true для активной (текущей) версии.
@@ -63,12 +63,12 @@ func (k ExceptionKind) Valid() bool {
 
 // TimeException — отпуск, больничный, командировка и т.п.
 type TimeException struct {
-	ID         uuid.UUID
-	EmployeeID uuid.UUID
-	Kind       ExceptionKind
-	StartAt    time.Time
-	EndAt      time.Time
-	Comment    string
-	Source     string
-	CreatedAt  time.Time
+	ID         uuid.UUID     `json:"id"`
+	EmployeeID uuid.UUID     `json:"employee_id"`
+	Kind       ExceptionKind `json:"kind"`
+	StartAt    time.Time     `json:"start_at"`
+	EndAt      time.Time     `json:"end_at"`
+	Comment    string        `json:"comment,omitempty"`
+	Source     string        `json:"source,omitempty"`
+	CreatedAt  time.Time     `json:"created_at"`
 }

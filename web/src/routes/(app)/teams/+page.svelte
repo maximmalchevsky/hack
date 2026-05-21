@@ -273,7 +273,7 @@
 	<div>
 		<h1>Команды</h1>
 		<div class="page-header__subtitle">
-			Состав, руководители, владельцы. Используется в /scheduler, /team-map и для рекомендаций.
+			Состав, руководители, владельцы команд.
 		</div>
 	</div>
 </div>
@@ -317,7 +317,7 @@
 
 			{#if canEdit}
 				<div
-					style="margin-top: 12px; padding-top: 12px; border-top: 0.5px solid var(--border); display: flex; gap: 6px;"
+					style="margin-top: 12px; padding-top: 12px; border-top: 0.5px solid var(--border); display: flex; gap: 6px; align-items: stretch;"
 				>
 					<input
 						type="text"
@@ -327,7 +327,6 @@
 						disabled={busy}
 					/>
 					<Button
-						size="sm"
 						variant="primary"
 						icon="ti-plus"
 						onclick={onCreate}
@@ -441,7 +440,7 @@
 												size="xs"
 												icon="ti-crown"
 												onclick={() => onSetManager(m.employee_id)}
-												disabled={busy}>Назначить рук.</Button
+												disabled={busy}>Назначить руководителя</Button
 											>
 										{/if}
 										<Button

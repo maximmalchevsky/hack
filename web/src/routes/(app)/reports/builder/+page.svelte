@@ -572,7 +572,7 @@
 	<div class="section">
 		<Card title="Сохранить как пресет" subtitle="Имя для быстрого возврата">
 			<div class="flex gap-2" style="align-items: flex-end;">
-				<div class="field" style="flex: 1;">
+				<div class="field" style="flex: 1; margin-bottom: 0;">
 					<label class="field__label" for="b-name">Имя пресета</label>
 					<input
 						id="b-name"
@@ -618,7 +618,7 @@
 					onclick={refreshPreview}
 					disabled={busy !== null || pickedColumns.size === 0}
 				>
-					{busy === 'preview' ? 'Считаем…' : 'Превью'}
+					{busy === 'preview' ? 'Считаем…' : 'Просмотр'}
 				</Button>
 				<Button
 					variant="ghost"
@@ -644,7 +644,7 @@
 		<div class="section">
 			<Card
 				title={preview.title}
-				subtitle="Превью первых 20 строк ({preview.rows.length} всего)"
+				subtitle="Первые 20 строк ({preview.rows.length} всего)"
 			>
 				{#if preview.rows.length === 0}
 					<div class="text-text-3 text-sm" style="padding: 16px; text-align: center;">

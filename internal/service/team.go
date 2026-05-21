@@ -362,9 +362,16 @@ func fillRow(cells []string, details []CellDetail, hours []int, weekStart time.T
 			overlapping := eventsOverlapping(cellStart, cellEnd, events)
 			inWork := !workStart.IsZero() && !cellStart.Before(workStart) && !cellEnd.After(workEnd)
 			busy := len(overlapping) > 0
+			// Double-booking: два и более event'а реально пересекаются по времени.
+			doubleBooked := hasTimeOverlap(overlapping)
 
 			switch {
+			case doubleBooked:
+				// Два события одновременно — явный конфликт (red).
+				cells[cellIdx] = "conflict"
+				details[cellIdx].Events = overlapping
 			case busy && !inWork:
+				// Событие вне рабочего графика — тоже конфликт.
 				cells[cellIdx] = "conflict"
 				details[cellIdx].Events = overlapping
 			case busy:
@@ -396,6 +403,23 @@ func excInCell(s, e time.Time, excs []domain.TimeException) *CellExceptionRef {
 }
 
 // eventsOverlapping — все события, попадающие в ячейку.
+// hasTimeOverlap — есть ли в наборе хотя бы одна пара событий, реально
+// пересекающихся по времени (двойное бронирование).
+// Если два события стоят встык (10:00–11:00 и 11:00–12:00) — это НЕ конфликт.
+func hasTimeOverlap(events []CellEventRef) bool {
+	if len(events) < 2 {
+		return false
+	}
+	for i := 0; i < len(events); i++ {
+		for j := i + 1; j < len(events); j++ {
+			if events[i].StartAt.Before(events[j].EndAt) && events[j].StartAt.Before(events[i].EndAt) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func eventsOverlapping(s, e time.Time, events []domain.CalendarEvent) []CellEventRef {
 	var out []CellEventRef
 	for _, ev := range events {

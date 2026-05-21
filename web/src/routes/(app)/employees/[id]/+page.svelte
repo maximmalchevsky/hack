@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import Card from '$lib/components/Card.svelte';
 	import Badge from '$lib/components/Badge.svelte';
@@ -12,7 +11,10 @@
 	import { ApiError } from '$lib/api/client';
 	import { user } from '$lib/stores/user';
 
-	const employeeID = $derived($page.params.id);
+	let detail = $state<EmployeeDetail | null>(null);
+	let metrics = $state<EmployeeMetrics | null>(null);
+	let loading = $state(true);
+	let error = $state<string | null>(null);
 
 	// Интеграции — приватная информация: показываем только себе или admin/hr.
 	const canSeeIntegrations = $derived(
@@ -23,23 +25,33 @@
 				$user.role === 'hr')
 	);
 
-	let detail = $state<EmployeeDetail | null>(null);
-	let metrics = $state<EmployeeMetrics | null>(null);
-	let loading = $state(true);
-	let error = $state<string | null>(null);
+	const employeeID = $derived($page.params.id);
 
-	onMount(async () => {
+	// При смене id (или первой загрузке) запускаем перезагрузку данных.
+	// Используем явный $effect.pre чтобы реакция на смену id была чистой,
+	// без эффектов от других $state внутри (detail/metrics — write-only).
+	$effect(() => {
+		const id = employeeID;
+		if (!id) return;
+		void loadEmployee(id);
+	});
+
+	async function loadEmployee(id: string) {
+		loading = true;
+		error = null;
 		try {
-			[detail, metrics] = await Promise.all([
-				getEmployeeDetail(employeeID),
-				getEmployeeMetrics(employeeID).catch(() => null)
+			const [d, m] = await Promise.all([
+				getEmployeeDetail(id),
+				getEmployeeMetrics(id).catch(() => null)
 			]);
+			detail = d;
+			metrics = m;
 		} catch (e) {
 			error = e instanceof ApiError ? e.message : String(e);
 		} finally {
 			loading = false;
 		}
-	});
+	}
 
 	function initials(name: string): string {
 		const parts = name.trim().split(/\s+/);
@@ -59,6 +71,31 @@
 		if (a < 0.5) return 'danger';
 		if (a < 0.7) return 'warning';
 		return 'success';
+	}
+
+	// Расписание по дням недели — для блока графика.
+	type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun';
+	const DAY_LABELS: { key: DayKey; label: string }[] = [
+		{ key: 'mon', label: 'Пн' },
+		{ key: 'tue', label: 'Вт' },
+		{ key: 'wed', label: 'Ср' },
+		{ key: 'thu', label: 'Чт' },
+		{ key: 'fri', label: 'Пт' },
+		{ key: 'sat', label: 'Сб' },
+		{ key: 'sun', label: 'Вс' }
+	];
+
+	function workFormatLabel(f?: string): string {
+		switch (f) {
+			case 'office':
+				return 'Офис';
+			case 'remote':
+				return 'Удалёнка';
+			case 'hybrid':
+				return 'Гибрид';
+			default:
+				return f ?? '—';
+		}
 	}
 </script>
 
@@ -139,16 +176,36 @@
 			{#if detail.work_profile}
 				<div class="text-text-2 text-sm">
 					<div>Часовой пояс: <strong>{detail.work_profile.timezone}</strong></div>
-					<div>Формат: <strong>{detail.work_profile.work_format}</strong></div>
+					<div>Формат: <strong>{workFormatLabel(detail.work_profile.work_format)}</strong></div>
 					{#if detail.employee.hr_work_format && detail.employee.hr_work_format !== detail.work_profile.work_format}
 						<div style="margin-top: 8px;">
 							<Badge variant="warning">
 								<i class="ti ti-alert-triangle"></i>
-								HR-формат "{detail.employee.hr_work_format}" не совпадает с профильным
+								HR-формат "{workFormatLabel(detail.employee.hr_work_format)}" не совпадает с профильным
 							</Badge>
 						</div>
 					{/if}
-					<div style="margin-top: 8px;">
+
+					<div class="schedule">
+						<div class="schedule__title">График работы</div>
+						<div class="schedule__grid">
+							{#each DAY_LABELS as d (d.key)}
+								{@const dh = detail.work_profile.days_of_week?.[d.key]}
+								<div class="schedule__day" class:schedule__day--off={!dh}>
+									<div class="schedule__day-label">{d.label}</div>
+									<div class="schedule__day-hours">
+										{#if dh}
+											{dh.start}–{dh.end}
+										{:else}
+											—
+										{/if}
+									</div>
+								</div>
+							{/each}
+						</div>
+					</div>
+
+					<div style="margin-top: 12px;">
 						Обновлён: <strong>{fmtDate(detail.work_profile.valid_from)}</strong>
 					</div>
 				</div>
@@ -217,3 +274,51 @@
 		</div>
 	{/if}
 {/if}
+
+<style>
+	.schedule {
+		margin-top: 14px;
+	}
+	.schedule__title {
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.4px;
+		color: var(--text-3);
+		margin-bottom: 6px;
+	}
+	.schedule__grid {
+		display: grid;
+		grid-template-columns: repeat(7, 1fr);
+		gap: 6px;
+	}
+	.schedule__day {
+		text-align: center;
+		padding: 8px 4px;
+		background: var(--surface);
+		border: 0.5px solid var(--border);
+		border-radius: 8px;
+	}
+	.schedule__day--off {
+		background: transparent;
+		border-style: dashed;
+		color: var(--text-3);
+	}
+	.schedule__day-label {
+		font-size: 11px;
+		color: var(--text-2);
+		text-transform: uppercase;
+		letter-spacing: 0.3px;
+	}
+	.schedule__day-hours {
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--text);
+		margin-top: 4px;
+		font-variant-numeric: tabular-nums;
+	}
+	.schedule__day--off .schedule__day-hours {
+		color: var(--text-3);
+		font-weight: 400;
+	}
+</style>
