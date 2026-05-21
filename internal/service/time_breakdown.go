@@ -64,6 +64,89 @@ type TimeBreakdownResult struct {
 	Items        []BreakdownItem `json:"items"`
 }
 
+// BuildForTeam — то же самое, но по агрегату всех `team_members` команды.
+// RBAC проверяется на уровне handler: либо вызывающий — owner команды, либо admin/HR.
+func (s *TimeBreakdownService) BuildForTeam(ctx context.Context, teamID uuid.UUID, days int) (TimeBreakdownResult, error) {
+	if days <= 0 {
+		days = 30
+	}
+	from := time.Now().AddDate(0, 0, -days)
+	to := time.Now()
+
+	out := TimeBreakdownResult{From: from, To: to, Items: []BreakdownItem{}}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT COALESCE(ce.title, ''), ce.start_at, ce.end_at
+		FROM calendar_events ce
+		JOIN team_members tm ON tm.employee_id = ce.employee_id
+		WHERE tm.team_id = $1
+		  AND ce.start_at >= $2 AND ce.start_at < $3
+		  AND ce.status <> 'cancelled'
+	`, teamID, from, to)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+
+	type agg struct {
+		minutes int
+		count   int
+	}
+	buckets := map[string]*agg{}
+	totalMin := 0
+
+	for rows.Next() {
+		var title string
+		var startAt, endAt time.Time
+		if err := rows.Scan(&title, &startAt, &endAt); err != nil {
+			continue
+		}
+		dur := int(endAt.Sub(startAt).Minutes())
+		if dur <= 0 || dur > 24*60 {
+			continue
+		}
+		c := categorize(title)
+		b, ok := buckets[c]
+		if !ok {
+			b = &agg{}
+			buckets[c] = b
+		}
+		b.minutes += dur
+		b.count++
+		totalMin += dur
+	}
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	out.TotalMinutes = totalMin
+	out.TotalHours = float64(totalMin) / 60.0
+
+	for name, b := range buckets {
+		percent := 0.0
+		if totalMin > 0 {
+			percent = float64(b.minutes) / float64(totalMin) * 100
+		}
+		out.Items = append(out.Items, BreakdownItem{
+			Category: name,
+			Minutes:  b.minutes,
+			Hours:    float64(b.minutes) / 60.0,
+			Count:    b.count,
+			Percent:  percent,
+		})
+	}
+
+	for i := 0; i < len(out.Items); i++ {
+		for j := i + 1; j < len(out.Items); j++ {
+			if out.Items[j].Minutes > out.Items[i].Minutes {
+				out.Items[i], out.Items[j] = out.Items[j], out.Items[i]
+			}
+		}
+	}
+
+	return out, nil
+}
+
 // Build — за `days` дней назад от now() для сотрудника empID.
 func (s *TimeBreakdownService) Build(ctx context.Context, empID uuid.UUID, days int) (TimeBreakdownResult, error) {
 	if days <= 0 {

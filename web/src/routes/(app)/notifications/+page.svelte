@@ -3,7 +3,10 @@
 	import Card from '$lib/components/Card.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import Tabs from '$lib/components/Tabs.svelte';
+	import Modal from '$lib/components/Modal.svelte';
+	import Button from '$lib/components/Button.svelte';
 	import { notifications } from '$lib/stores/notifications';
+	import { marked } from 'marked';
 
 	let activeTab = $state('all');
 
@@ -41,7 +44,24 @@
 		if (k.includes('sync') || k.includes('success')) return 'success';
 		if (k.includes('recommend')) return 'info';
 		if (k.includes('confirm') || k.includes('warning')) return 'warning';
+		if (k === 'team_digest') return 'info';
 		return 'neutral';
+	}
+
+	function renderMd(s: string): string {
+		// marked синхронно отдает строку, но типы говорят про Promise. Сделаем безопасный обход.
+		const out = marked.parse(s ?? '');
+		return typeof out === 'string' ? out : (s ?? '');
+	}
+
+	// Модалка с брифом ИИ.
+	let briefOpen = $state(false);
+	let briefMd = $state('');
+	let briefTitle = $state('');
+	function openBrief(md: string, title: string) {
+		briefMd = md;
+		briefTitle = title;
+		briefOpen = true;
 	}
 </script>
 
@@ -84,8 +104,26 @@
 								{/if}
 							</div>
 							{#if n.body}
-								<div class="text-text-2 text-sm">{n.body}</div>
+								{#if n.kind === 'team_digest'}
+									<div class="text-text-2 text-sm notif-md">
+										{@html renderMd(n.body)}
+									</div>
+								{:else}
+									<div class="text-text-2 text-sm">{n.body}</div>
+								{/if}
 							{/if}
+
+							{#if n.kind === 'event_reminder' && n.payload && (n.payload as any).brief_md}
+								<button
+									type="button"
+									class="brief-btn"
+									onclick={() => openBrief((n.payload as any).brief_md, n.title)}
+								>
+									<i class="ti ti-sparkles"></i>
+									Бриф ИИ
+								</button>
+							{/if}
+
 							<div class="text-text-3 text-xs mt-1">
 								{fmtTime(n.created_at)} · {n.kind}
 							</div>
@@ -104,6 +142,15 @@
 	</div>
 {/if}
 
+<Modal open={briefOpen} title={briefTitle || 'Бриф ИИ'} size="md" onClose={() => (briefOpen = false)}>
+	<div class="brief-content notif-md">
+		{@html renderMd(briefMd)}
+	</div>
+	{#snippet footer()}
+		<Button onclick={() => (briefOpen = false)}>Закрыть</Button>
+	{/snippet}
+</Modal>
+
 <style>
 	.notif-row--read :global(.card) {
 		opacity: 0.55;
@@ -111,5 +158,45 @@
 	}
 	.notif-row--read :global(.card__title) {
 		font-weight: 500;
+	}
+	.brief-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		margin-top: 8px;
+		padding: 6px 12px;
+		background: var(--info-bg);
+		color: var(--info-strong);
+		border: 1px solid var(--info-strong);
+		border-radius: 8px;
+		font-size: 12px;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.12s;
+	}
+	.brief-btn:hover {
+		background: var(--info-strong);
+		color: white;
+	}
+	.brief-content {
+		font-size: 14px;
+		line-height: 1.5;
+		color: var(--text);
+	}
+	.brief-content :global(p) {
+		margin: 0 0 10px;
+	}
+	.brief-content :global(strong) {
+		color: var(--text);
+	}
+	:global(.notif-md p) {
+		margin: 0 0 6px;
+	}
+	:global(.notif-md ul) {
+		margin: 4px 0 6px;
+		padding-left: 18px;
+	}
+	:global(.notif-md li) {
+		margin: 2px 0;
 	}
 </style>

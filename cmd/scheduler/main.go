@@ -67,6 +67,9 @@ func main() {
 
 		// Каждую минуту — сканируем calendar_events и шлём reminder за 15 мин до старта.
 		{"@every 1m", workers.TaskReminderScan, workers.QueueDefault, nil},
+
+		// Понедельник 09:00 MSK (06:00 UTC) — собираем недельный digest для менеджеров.
+		{"0 6 * * 1", workers.TaskTeamDigestWeekly, workers.QueueLow, nil},
 	}
 
 	for _, p := range periodic {

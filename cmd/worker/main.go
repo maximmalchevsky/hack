@@ -136,6 +136,8 @@ func main() {
 	}
 	metricsCache := service.NewMetricsCache(rdb)
 	recommendationSvc := service.NewRecommendationService(db, recommender, weights, metricsCache)
+	teamDigestSvc := service.NewTeamWeeklyDigestService(db, llm)
+	meetingPrepSvc := service.NewMeetingPrepService(db, llm)
 
 	// --- Asynq ---
 	asynqRedis := asynq.RedisClientOpt{
@@ -167,6 +169,8 @@ func main() {
 		Enqueuer:        enq,
 		Notifier:        smartNotifier,
 		Notifications:   notificationSvc,
+		TeamDigest:      teamDigestSvc,
+		MeetingPrep:     meetingPrepSvc,
 	})
 	h.Register(mux)
 

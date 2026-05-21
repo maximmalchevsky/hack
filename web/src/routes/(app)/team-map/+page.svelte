@@ -4,6 +4,7 @@
 	import Badge from '$lib/components/Badge.svelte';
 	import Tabs from '$lib/components/Tabs.svelte';
 	import Heatmap, { type HeatmapRow, type HeatmapCellState } from '$lib/components/Heatmap.svelte';
+	import TimeBreakdownCard from '$lib/components/TimeBreakdownCard.svelte';
 	import {
 		listTeams,
 		getAvailability,
@@ -227,5 +228,11 @@
 				cellTooltip={tooltipFn}
 			/>
 		</Card>
+
+		{#if selectedTeamID}
+			<div class="section" style="margin-top: 16px;">
+				<TimeBreakdownCard teamID={selectedTeamID} titleOverride="Куда уходит время команды" />
+			</div>
+		{/if}
 	{/if}
 {/if}

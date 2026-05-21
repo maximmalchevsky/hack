@@ -1,15 +1,14 @@
-# WorkTime Sync — production reverse-proxy
-# Один домен — фронт + API + WS на same-origin.
-# Let's Encrypt поднимется автоматически при первом запуске Caddy.
-{
-	email {$LETSENCRYPT_EMAIL}
-}
+# WorkTime Sync — пример блока для Caddy на ХОСТЕ.
+# Скопируй в /etc/caddy/Caddyfile (или Caddyfile.d), замени домен.
+#
+# Контейнеры открыты на 127.0.0.1:8080 (API) и 127.0.0.1:3000 (web).
+# Let's Encrypt поднимется автоматически при первом запуске caddy reload.
 
-{$DOMAIN} {
+worktime.example.ru {
 	# API, swagger, healthz, websocket, SSE — на Go-бэкенд.
 	@api path /api/* /swagger* /healthz /metrics /ws/*
 	handle @api {
-		reverse_proxy api:8080 {
+		reverse_proxy 127.0.0.1:8080 {
 			# SSE / WebSocket: убираем буферизацию ответа.
 			flush_interval -1
 		}
@@ -17,13 +16,13 @@
 
 	# Всё остальное — SvelteKit (adapter-node).
 	handle {
-		reverse_proxy web:3000
+		reverse_proxy 127.0.0.1:3000
 	}
 
 	encode zstd gzip
 
 	log {
-		output file /data/access.log {
+		output file /var/log/caddy/worktime.access.log {
 			roll_size 10mb
 			roll_keep 5
 		}

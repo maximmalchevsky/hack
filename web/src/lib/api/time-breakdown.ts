@@ -19,3 +19,6 @@ export interface TimeBreakdown {
 
 export const getMyTimeBreakdown = (days = 30) =>
 	api.get<TimeBreakdown>(`/api/v1/me/time-breakdown?days=${days}`);
+
+export const getTeamTimeBreakdown = (teamID: string, days = 30) =>
+	api.get<TimeBreakdown>(`/api/v1/teams/${teamID}/time-breakdown?days=${days}`);

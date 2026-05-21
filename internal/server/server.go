@@ -151,6 +151,9 @@ func (s *Server) registerRoutes() {
 	forecastSvc := service.NewForecastService(s.db, conflictsSvc)
 	pulseSvc := service.NewPulseService(s.db)
 	timeBreakdownSvc := service.NewTimeBreakdownService(s.db)
+	adminImportSvc := service.NewAdminImportService(s.db)
+	viewPresetsSvc := service.NewViewPresetsService(s.db)
+	teamDigestSvc := service.NewTeamWeeklyDigestService(s.db, s.llm)
 	weeklySummarySvc := service.NewWeeklySummaryService(s.db, s.llm)
 	employeeSvc := service.NewEmployeeService(s.db)
 	webhookSvc := service.NewWebhookService(s.db, s.registry, s.enqueuer)
@@ -193,7 +196,10 @@ func (s *Server) registerRoutes() {
 	adminH := handler.NewAdminHandler(adminSvc)
 	auditH := handler.NewAuditHandler(auditSvc)
 	pulseH := handler.NewPulseHandler(pulseSvc)
-	timeBreakdownH := handler.NewTimeBreakdownHandler(timeBreakdownSvc)
+	timeBreakdownH := handler.NewTimeBreakdownHandler(timeBreakdownSvc, s.db)
+	adminImportH := handler.NewAdminImportHandler(adminImportSvc)
+	viewPresetsH := handler.NewViewPresetsHandler(viewPresetsSvc)
+	teamDigestH := handler.NewTeamDigestHandler(teamDigestSvc, notificationSvc)
 
 	// --- Webhooks (без авторизации) ---
 	webhookH.Mount(api)
@@ -231,6 +237,9 @@ func (s *Server) registerRoutes() {
 	analyticsDashH.Mount(authed)
 	pulseH.Mount(authed)
 	timeBreakdownH.Mount(authed)
+	adminImportH.Mount(authed)
+	viewPresetsH.Mount(authed)
+	teamDigestH.Mount(authed)
 }
 
 func (s *Server) healthz(c fiber.Ctx) error {

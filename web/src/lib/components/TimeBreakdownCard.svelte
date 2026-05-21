@@ -5,7 +5,19 @@
 	import Card from './Card.svelte';
 	import Badge from './Badge.svelte';
 	import EChart from './EChart.svelte';
-	import { getMyTimeBreakdown, type TimeBreakdown } from '$lib/api/time-breakdown';
+	import {
+		getMyTimeBreakdown,
+		getTeamTimeBreakdown,
+		type TimeBreakdown
+	} from '$lib/api/time-breakdown';
+
+	interface Props {
+		// Если задан — рисуем агрегат по команде. Иначе — личный.
+		teamID?: string;
+		// Заголовок переопределить (для team-режима).
+		titleOverride?: string;
+	}
+	let { teamID, titleOverride }: Props = $props();
 
 	let data = $state<TimeBreakdown | null>(null);
 	let loading = $state(true);
@@ -29,13 +41,21 @@
 		loading = true;
 		error = null;
 		try {
-			data = await getMyTimeBreakdown(days);
+			data = teamID
+				? await getTeamTimeBreakdown(teamID, days)
+				: await getMyTimeBreakdown(days);
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 		} finally {
 			loading = false;
 		}
 	}
+
+	// Если родитель сменил teamID — перезагружаем.
+	$effect(() => {
+		void teamID;
+		if (!loading) reload();
+	});
 
 	const donutOption = $derived.by(() => {
 		if (!data || data.items.length === 0) return null;
@@ -72,8 +92,10 @@
 </script>
 
 <Card
-	title="Куда уходит время"
-	subtitle="Раскладка встреч по категориям — определяется по словам в названии"
+	title={titleOverride ?? 'Куда уходит время'}
+	subtitle={teamID
+		? 'Раскладка встреч команды по категориям — определяется по словам в названии'
+		: 'Раскладка встреч по категориям — определяется по словам в названии'}
 >
 	{#snippet actions()}
 		<div class="tb__period">

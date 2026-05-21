@@ -13,6 +13,7 @@ const (
 	TaskNotificationSend        = "notifications:send"
 	TaskDigestDaily             = "digest:daily"
 	TaskReminderScan            = "reminders:scan" // каждую минуту — событие через 15 мин
+	TaskTeamDigestWeekly        = "digest:team-weekly"
 
 )
 

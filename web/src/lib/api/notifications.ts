@@ -8,6 +8,7 @@ export interface Notification {
 	link?: string;
 	read: boolean;
 	created_at: string;
+	payload?: Record<string, unknown>;
 }
 
 export const listNotifications = (opts?: { unreadOnly?: boolean }) => {

@@ -26,6 +26,8 @@ type Deps struct {
 	Enqueuer        *Enqueuer
 	Notifier        SmartNotifierRunner
 	Notifications   *service.NotificationService // для reminder-сканера
+	TeamDigest      *service.TeamWeeklyDigestService
+	MeetingPrep     *service.MeetingPrepService
 }
 
 // SmartNotifierRunner — лёгкий интерфейс, чтобы workers/ не зависел от notifier-пакета.
@@ -52,6 +54,63 @@ func (h *Handlers) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(TaskNotificationSend, h.handleNotificationSend)
 	mux.HandleFunc(TaskDigestDaily, h.handleDigestDaily)
 	mux.HandleFunc(TaskReminderScan, h.handleReminderScan)
+	mux.HandleFunc(TaskTeamDigestWeekly, h.handleTeamDigestWeekly)
+}
+
+// handleTeamDigestWeekly — для каждого менеджера/HR/admin (т.е. employee, у которого есть свои команды)
+// собирает digest и кладёт в notifications. Идемпотентно за счёт UNIQUE-ничего нет, но по дате (week_start)
+// дублей не делает — потому что running раз в неделю.
+func (h *Handlers) handleTeamDigestWeekly(ctx context.Context, t *asynq.Task) error {
+	if h.deps.TeamDigest == nil || h.deps.Notifications == nil || h.deps.Pool == nil {
+		return nil
+	}
+
+	// Берём всех employees, у которых есть хотя бы одна команда, где они owner.
+	rows, err := h.deps.Pool.Query(ctx, `
+		SELECT DISTINCT e.id, u.id
+		FROM employees e
+		JOIN users u ON u.id = e.user_id
+		WHERE EXISTS (SELECT 1 FROM teams t WHERE t.owner_id = e.id)
+	`)
+	if err != nil {
+		return fmt.Errorf("digest: select managers: %w", err)
+	}
+	defer rows.Close()
+
+	type pair struct{ emp, user uuid.UUID }
+	managers := []pair{}
+	for rows.Next() {
+		var p pair
+		if err := rows.Scan(&p.emp, &p.user); err == nil {
+			managers = append(managers, p)
+		}
+	}
+
+	for _, m := range managers {
+		payload, err := h.deps.TeamDigest.Build(ctx, m.emp)
+		if err != nil {
+			h.deps.Log.Warn().Err(err).Str("emp", m.emp.String()).Msg("digest: build")
+			continue
+		}
+		md := h.deps.TeamDigest.GenerateText(ctx, payload)
+		payload.Md = md
+
+		raw, _ := json.Marshal(payload)
+		_, err = h.deps.Notifications.Push(ctx, service.CreateInput{
+			UserID: m.user,
+			Kind:   "team_digest",
+			Title:  fmt.Sprintf("Дайджест за неделю: %d сотрудников, риск %.2f", payload.TotalEmployees, payload.AvgRiskR),
+			Body:   md,
+			Link:   "/analytics",
+			Payload: map[string]any{
+				"digest": json.RawMessage(raw),
+			},
+		})
+		if err != nil {
+			h.deps.Log.Warn().Err(err).Str("user", m.user.String()).Msg("digest: push notification")
+		}
+	}
+	return nil
 }
 
 // handleReminderScan — раз в минуту смотрит, какие события стартуют в окне
@@ -116,17 +175,30 @@ func (h *Handlers) handleReminderScan(ctx context.Context, t *asynq.Task) error 
 			e.StartAt.Format("15:04"),
 			e.EndAt.Format("15:04"),
 		)
+
+		payload := map[string]any{
+			"event_id": e.EventID.String(),
+			"start_at": e.StartAt,
+			"end_at":   e.EndAt,
+		}
+
+		// AI-бриф для встреч 2+. Если LLM нет / ошибка / пусто — payload без brief_md.
+		if h.deps.MeetingPrep != nil {
+			brief, berr := h.deps.MeetingPrep.Build(ctx, e.EventID)
+			if berr == nil && brief != "" {
+				payload["brief_md"] = brief
+			} else if berr != nil {
+				h.deps.Log.Debug().Err(berr).Str("event", e.EventID.String()).Msg("meeting prep: build")
+			}
+		}
+
 		if _, perr := h.deps.Notifications.Push(ctx, service.CreateInput{
-			UserID: e.UserID,
-			Kind:   "event_reminder",
-			Title:  title,
-			Body:   body,
-			Link:   "/dashboard",
-			Payload: map[string]any{
-				"event_id":  e.EventID.String(),
-				"start_at":  e.StartAt,
-				"end_at":    e.EndAt,
-			},
+			UserID:  e.UserID,
+			Kind:    "event_reminder",
+			Title:   title,
+			Body:    body,
+			Link:    "/dashboard",
+			Payload: payload,
 		}); perr == nil {
 			pushed++
 		}

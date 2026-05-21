@@ -5,6 +5,7 @@
 	import Tabs from '$lib/components/Tabs.svelte';
 	import Avatar from '$lib/components/Avatar.svelte';
 	import MetricInfo from '$lib/components/MetricInfo.svelte';
+	import ViewPresetsBar from '$lib/components/ViewPresetsBar.svelte';
 	import {
 		getDiagnostics,
 		getBurnout,
@@ -155,6 +156,16 @@
 		<div class="page-header__subtitle">
 			Группировка сотрудников по актуальности рабочего графика
 		</div>
+	</div>
+	<div>
+		<ViewPresetsBar
+			page="diagnostics"
+			currentFilters={() => ({ tab: activeTab })}
+			onApply={(f) => {
+				const t = f.tab as string;
+				if (t) activeTab = t;
+			}}
+		/>
 	</div>
 </div>
 

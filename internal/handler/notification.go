@@ -139,17 +139,18 @@ func (h *NotificationHandler) sse(c fiber.Ctx) error {
 // --- DTO + helpers ---
 
 type NotificationDTO struct {
-	ID        uuid.UUID `json:"id"`
-	Kind      string    `json:"kind"`
-	Title     string    `json:"title"`
-	Body      string    `json:"body,omitempty"`
-	Link      string    `json:"link,omitempty"`
-	Read      bool      `json:"read"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        uuid.UUID       `json:"id"`
+	Kind      string          `json:"kind"`
+	Title     string          `json:"title"`
+	Body      string          `json:"body,omitempty"`
+	Link      string          `json:"link,omitempty"`
+	Read      bool            `json:"read"`
+	CreatedAt time.Time       `json:"created_at"`
+	Payload   json.RawMessage `json:"payload,omitempty"`
 }
 
 func notificationToDTO(n domain.Notification) NotificationDTO {
-	return NotificationDTO{
+	d := NotificationDTO{
 		ID:        n.ID,
 		Kind:      n.Kind,
 		Title:     n.Title,
@@ -158,6 +159,10 @@ func notificationToDTO(n domain.Notification) NotificationDTO {
 		Read:      n.ReadAt != nil,
 		CreatedAt: n.CreatedAt,
 	}
+	if len(n.Payload) > 0 {
+		d.Payload = json.RawMessage(n.Payload)
+	}
+	return d
 }
 
 // safeJSON — на случай если кто-то передаст ту самую "notification.created" структуру.

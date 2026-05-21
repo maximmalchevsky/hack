@@ -43,6 +43,7 @@
 		type TeamScopeOverview
 	} from '$lib/api/analytics';
 	import { ApiError } from '$lib/api/client';
+	import ViewPresetsBar from '$lib/components/ViewPresetsBar.svelte';
 
 	type Tab = 'me' | 'teams' | 'company';
 	const dayNames = ['ПН', 'ВТ', 'СР', 'ЧТ', 'ПТ', 'СБ', 'ВС'];
@@ -582,6 +583,18 @@
 				Общая картина по сотрудникам, командам и динамике метрик.
 			{/if}
 		</div>
+	</div>
+	<div>
+		<ViewPresetsBar
+			page="analytics"
+			currentFilters={() => ({ tab: activeTab, team_id: selectedTeamId })}
+			onApply={(f) => {
+				const t = (f.tab as Tab) ?? activeTab;
+				if (t === 'me' || t === 'teams' || t === 'company') setTab(t);
+				const tid = (f.team_id as string) ?? '';
+				selectedTeamId = tid;
+			}}
+		/>
 	</div>
 </div>
 

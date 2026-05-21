@@ -1,4 +1,55 @@
-import { api } from './client';
+import { api, getAccessToken } from './client';
+import { browser } from '$app/environment';
+import { env } from '$env/dynamic/public';
+
+function adminBaseURL(): string {
+	return env.PUBLIC_API_URL || (browser ? '' : 'http://localhost:8080');
+}
+
+export interface ImportCreatedRow {
+	email: string;
+	full_name: string;
+	password: string;
+}
+export interface ImportSkippedRow {
+	row: number;
+	email: string;
+	reason: string;
+}
+export interface ImportErrorRow {
+	row: number;
+	msg: string;
+}
+export interface ImportResult {
+	created: ImportCreatedRow[];
+	skipped: ImportSkippedRow[];
+	errors: ImportErrorRow[];
+}
+
+// Отправляем CSV как text/csv (не JSON).
+export async function importUsersCSV(csv: string): Promise<ImportResult> {
+	const token = getAccessToken();
+	const res = await fetch(`${adminBaseURL()}/api/v1/admin/users/import`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'text/csv',
+			Authorization: token ? `Bearer ${token}` : ''
+		},
+		body: csv
+	});
+	if (!res.ok) {
+		const txt = await res.text().catch(() => '');
+		let msg = `import failed: ${res.status}`;
+		try {
+			const j = JSON.parse(txt);
+			if (j?.error) msg = j.error;
+		} catch {
+			if (txt) msg = txt;
+		}
+		throw new Error(msg);
+	}
+	return (await res.json()) as ImportResult;
+}
 
 export interface AdminUser {
 	id: string;
