@@ -130,12 +130,18 @@ func (s *PulseService) Team(ctx context.Context, ownerEmpID uuid.UUID) (TeamSumm
 	sum := TeamSummary{Members: []TeamMember{}}
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT DISTINCT e.id, COALESCE(u.full_name, ''), COALESCE(e.department, '')
-		FROM employees e
-		JOIN users u ON u.id = e.user_id
-		JOIN team_members tm ON tm.employee_id = e.id
-		JOIN teams t ON t.id = tm.team_id
-		WHERE t.owner_id = $1 AND e.id <> $1
+		SELECT id, full_name, department
+		FROM (
+			SELECT DISTINCT
+			       e.id           AS id,
+			       COALESCE(u.full_name, '')  AS full_name,
+			       COALESCE(e.department, '') AS department
+			FROM employees e
+			JOIN users u ON u.id = e.user_id
+			JOIN team_members tm ON tm.employee_id = e.id
+			JOIN teams t ON t.id = tm.team_id
+			WHERE t.owner_id = $1 AND e.id <> $1
+		) x
 		ORDER BY full_name
 	`, ownerEmpID)
 	if err != nil {

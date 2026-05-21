@@ -161,7 +161,7 @@ func (s *Server) registerRoutes() {
 
 	// --- Handlers ---
 	meH := handler.NewMeHandler(s.db, profileSvc, exceptionSvc, weeklySummarySvc).
-		WithTelegramBotUsername(s.cfg.Telegram.BotUsername)
+		WithTelegramBotUsername(telegramUsernameIfActive(s.cfg.Telegram.BotToken, s.cfg.Telegram.BotUsername))
 	profileH := handler.NewProfileHandler(profileSvc, s.enqueuer)
 	exceptionH := handler.NewExceptionHandler(exceptionSvc, s.enqueuer)
 	// Yandex Calendar OAuth — опциональный (если в .env не задан client_id, передаём nil).
@@ -331,4 +331,14 @@ func errorHandler(log zerolog.Logger) fiber.ErrorHandler {
 			Msg("request error")
 		return c.Status(code).JSON(handler.ErrorResponse{Error: err.Error()})
 	}
+}
+
+// telegramUsernameIfActive — отдаём username только если бот реально запущен
+// (т.е. есть и токен, и имя). Иначе фронт нарисует «бот не настроен», вместо
+// неработающей кнопки «Подключить».
+func telegramUsernameIfActive(token, username string) string {
+	if token == "" || username == "" {
+		return ""
+	}
+	return username
 }

@@ -406,7 +406,7 @@
 
 	<div class="section" style="margin-top: 24px;">
 		<Card title="Исключения" subtitle="Отпуска, больничные, командировки, личные часы">
-			<div class="flex flex-wrap gap-2 mb-4" style="align-items: end;">
+			<div class="flex flex-wrap gap-2" style="align-items: end; margin-bottom: 20px;">
 				<div class="field" style="margin-bottom: 0;">
 					<label class="field__label" for="ek">Тип</label>
 					<select id="ek" bind:value={excKind} style="width: 160px;">

@@ -342,10 +342,6 @@
 	<PulseCheckCard />
 </div>
 
-<div class="section">
-	<PulseTeamCard />
-</div>
-
 {#if summary && summary.ai_text}
 	<div class="section">
 		<Card>
@@ -356,11 +352,17 @@
 				<div class="weekly__body">
 					<div class="weekly__head">
 						<span>Резюме недели</span>
-						<Badge variant={summary.generated_by === 'ai' ? 'info' : 'neutral'}>
-							{summary.generated_by === 'ai' ? 'GigaChat' : 'rule-based'}
-						</Badge>
 					</div>
 					<div class="weekly__text">{@html renderMd(summary.ai_text)}</div>
+					<div class="weekly__footer">
+						{#if summary.generated_by === 'ai'}
+							<i class="ti ti-sparkles"></i>
+							<span>Сгенерировано GigaChat</span>
+						{:else}
+							<i class="ti ti-template"></i>
+							<span>Текст по шаблону</span>
+						{/if}
+					</div>
 				</div>
 			</div>
 		</Card>
@@ -564,6 +566,10 @@
 			</Card>
 		{/if}
 	{/if}
+</div>
+
+<div class="section">
+	<PulseTeamCard />
 </div>
 
 <style>
@@ -866,6 +872,20 @@
 	}
 	.weekly__text :global(p:last-child) {
 		margin-bottom: 0;
+	}
+	.weekly__footer {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin-top: 10px;
+		padding-top: 8px;
+		border-top: 1px dashed var(--border);
+		font-size: 11px;
+		color: var(--text-3);
+	}
+	.weekly__footer i {
+		font-size: 13px;
+		color: var(--info-strong);
 	}
 	.weekly__text :global(strong) {
 		font-weight: 600;

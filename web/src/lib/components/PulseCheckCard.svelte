@@ -56,9 +56,6 @@
 		}
 	}
 
-	function daysLeft(daysSince: number): number {
-		return Math.max(0, 14 - daysSince);
-	}
 </script>
 
 {#if loading}
@@ -67,8 +64,7 @@
 	<Card title="Pulse-check" subtitle="Не удалось загрузить">
 		<div class="text-text-3 text-sm" style="padding: 8px 0;">{error}</div>
 	</Card>
-{:else if state}
-	{#if state.should_ask}
+{:else if state?.should_ask}
 		<Card
 			title="Как ты сейчас?"
 			subtitle="Короткий пульс раз в 2 недели — помогает менеджеру понять, когда что-то идёт не так"
@@ -118,27 +114,8 @@
 						</button>
 					</div>
 				{/if}
-			</div>
-		</Card>
-	{:else if state.last && state.days_since !== undefined}
-		<Card title="Pulse-check" subtitle="В этом цикле уже ответил — спасибо">
-			<div class="pulse-done">
-				<div class="pulse-done__emoji">
-					{SCORES.find((s) => s.value === state!.last!.score)?.emoji ?? '🙂'}
-				</div>
-				<div class="pulse-done__meta">
-					<div class="pulse-done__title">
-						{SCORES.find((s) => s.value === state!.last!.score)?.label ?? '—'}
-					</div>
-					<div class="text-text-3 text-xs">
-						Следующий — через {daysLeft(state.days_since)} {daysLeft(state.days_since) === 1
-							? 'день'
-							: 'дн.'}
-					</div>
-				</div>
-			</div>
-		</Card>
-	{/if}
+		</div>
+	</Card>
 {/if}
 
 <style>
@@ -218,22 +195,6 @@
 		cursor: pointer;
 	}
 	.pulse__skip:hover {
-		color: var(--text);
-	}
-
-	.pulse-done {
-		display: flex;
-		align-items: center;
-		gap: 14px;
-		padding: 6px 0;
-	}
-	.pulse-done__emoji {
-		font-size: 36px;
-		line-height: 1;
-	}
-	.pulse-done__title {
-		font-size: 14px;
-		font-weight: 600;
 		color: var(--text);
 	}
 </style>
