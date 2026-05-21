@@ -119,7 +119,7 @@
 					valueVariant={metrics.Z > 0.3 ? 'danger' : metrics.Z > 0.15 ? 'warning' : 'success'}
 				/>
 				<Stat
-					label="HR-mismatch"
+					label="Расхождение с HR"
 					metricLetter="H"
 					value={metrics.H.toFixed(2)}
 					valueVariant={metrics.H > 0.5 ? 'danger' : metrics.H > 0 ? 'warning' : 'success'}

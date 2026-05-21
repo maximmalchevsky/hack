@@ -245,7 +245,7 @@
 		yAxis: { type: 'value', min: 0, max: 1.5 },
 		series: [
 			{
-				name: 'Свежесть A',
+				name: 'Актуальность A',
 				type: 'line',
 				smooth: true,
 				symbolSize: 7,
@@ -429,7 +429,7 @@
 
 	function ruGroup(g: string): string {
 		return (
-			{ fresh: 'Свежие', needs_confirm: 'Подтвердить', stale: 'Устаревшие', unknown: 'Без данных' }[
+			{ fresh: 'Актуальные', needs_confirm: 'Подтвердить', stale: 'Устаревшие', unknown: 'Без данных' }[
 				g
 			] ?? g
 		);
@@ -563,7 +563,7 @@
 			const last = tr[tr.length - 1].avg_a;
 			if (last < first - 0.1) {
 				out.push(
-					`Свежесть профиля упала с ${first.toFixed(2)} до ${last.toFixed(2)} за 8 недель.`
+					`Актуальность профиля упала с ${first.toFixed(2)} до ${last.toFixed(2)} за 8 недель.`
 				);
 			}
 		}
@@ -616,7 +616,7 @@
 	{:else if meOverview}
 		<div class="section">
 			<div class="stat-grid">
-				<Stat label="Моя свежесть" metricLetter="A" value={meOverview.avg_a.toFixed(2)} />
+				<Stat label="Моя актуальность" metricLetter="A" value={meOverview.avg_a.toFixed(2)} />
 				<Stat label="Мой риск" metricLetter="R" value={meOverview.avg_r.toFixed(2)} />
 				<Stat label="Моя загрузка" metricLetter="L" value={meOverview.avg_l.toFixed(2)} />
 				<Stat label="Профиль обновлён" value={fmtDays(meOverview.days_since_update)} />
@@ -645,7 +645,7 @@
 		{/if}
 
 		<div class="section grid-2" style="gap: 16px;">
-			<Card title="Динамика A и L за 8 недель" subtitle="Свежесть и загрузка по неделям">
+			<Card title="Динамика A и L за 8 недель" subtitle="Актуальность и загрузка по неделям">
 				<EChart option={meTrendOption} height="280px" />
 			</Card>
 			<Card title="Мои конфликты по дням недели" subtitle="События вне графика за 30 дней">
@@ -699,7 +699,7 @@
 			<div class="section">
 				<div class="stat-grid">
 					<Stat label="Сотрудников" value={String(teamsOv.employees)} />
-					<Stat label="Средняя свежесть" metricLetter="A" value={teamsOv.avg_a.toFixed(2)} />
+					<Stat label="Средняя актуальность" metricLetter="A" value={teamsOv.avg_a.toFixed(2)} />
 					<Stat label="Средний риск" metricLetter="R" value={teamsOv.avg_r.toFixed(2)} />
 					<Stat label="Средняя загрузка" metricLetter="L" value={teamsOv.avg_l.toFixed(2)} />
 					<Stat label="Конфликтов за 7 дн" value={String(teamsOv.conflicts_7d)} />
@@ -710,7 +710,7 @@
 			</div>
 
 			<div class="section grid-2" style="gap: 16px;">
-				<Card title="Динамика A за 8 недель" subtitle="Свежесть профилей по неделям (в скоупе выбранных команд)" metricLetter="A">
+				<Card title="Динамика A за 8 недель" subtitle="Актуальность профилей по неделям (в скоупе выбранных команд)" metricLetter="A">
 					<EChart option={teamsTrendOption} height="280px" />
 				</Card>
 				<Card title="Конфликты по дням недели" subtitle="За 30 дней">
@@ -749,7 +749,7 @@
 		<div class="section">
 			<div class="stat-grid">
 				<Stat label="Сотрудников" value={String(companyOv.employees)} />
-				<Stat label="Средняя свежесть" metricLetter="A" value={companyOv.avg_a.toFixed(2)} />
+				<Stat label="Средняя актуальность" metricLetter="A" value={companyOv.avg_a.toFixed(2)} />
 				<Stat label="Средний риск" metricLetter="R" value={companyOv.avg_r.toFixed(2)} />
 				<Stat label="Конфликтов за 7 дн" value={String(companyOv.conflicts_7d)} />
 				<Stat label="Устаревших" value={String(companyOv.stale_profiles)} />
@@ -778,7 +778,7 @@
 		{/if}
 
 		<div class="section grid-2" style="gap: 16px;">
-			<Card title="Динамика средней актуальности (8 недель)" subtitle="Чем выше — тем свежее графики">
+			<Card title="Динамика средней актуальности (8 недель)" subtitle="Чем выше — тем актуальнее графики">
 				<EChart option={companyTrendOption} height="280px" />
 			</Card>
 			<Card title="Конфликты по дням недели" subtitle="События вне рабочего графика за 30 дней">
@@ -796,7 +796,7 @@
 					<EChart option={companyTeamsOption} height={companyTeams.length * 36 + 60 + 'px'} />
 				{/if}
 			</Card>
-			<Card title="Распределение по группам" subtitle="Свежие / Подтвердить / Устаревшие / Без данных">
+			<Card title="Распределение по группам" subtitle="Актуальные / Подтвердить / Устаревшие / Без данных">
 				<EChart option={companyGroupsOption} height="300px" />
 			</Card>
 		</div>
@@ -883,7 +883,7 @@
 								<th class="lb-rank">#</th>
 								<th>Команда</th>
 								<th class="lb-num">Чел.</th>
-								<th class="lb-num">Свежесть A</th>
+								<th class="lb-num">Актуальность A</th>
 								<th class="lb-num">Риск R</th>
 								<th class="lb-num">Score</th>
 							</tr>

@@ -81,7 +81,7 @@
 		{ key: 'w2', short: 'w2', title: 'Конфликты', color: 'danger', icon: 'ti-alert-triangle' },
 		{ key: 'w3', short: 'w3', title: 'Загрузка', color: 'warning', icon: 'ti-gauge' },
 		{ key: 'w4', short: 'w4', title: 'Часовой пояс', color: 'teal', icon: 'ti-clock-shield' },
-		{ key: 'w5', short: 'w5', title: 'HR-mismatch', color: 'purple', icon: 'ti-building' }
+		{ key: 'w5', short: 'w5', title: 'Расхождение с HR', color: 'purple', icon: 'ti-building' }
 	];
 
 	function pct(v: number): number {
@@ -123,7 +123,7 @@
 				</div>
 				<div class="formula__legend-item">
 					<dt>A</dt>
-					<dd>актуальность, 1 = свежий профиль, 0 = устарел</dd>
+					<dd>актуальность, 1 = актуальный профиль, 0 = устарел</dd>
 				</div>
 				<div class="formula__legend-item">
 					<dt>C</dt>
@@ -245,8 +245,8 @@
 					<i class="ti ti-calendar-stats"></i>
 				</div>
 				<div class="weight-row__meta">
-					<div class="card__title">Freshness D — порог актуальности</div>
-					<div class="card__subtitle">Через сколько дней без обновления A падает до 0</div>
+					<div class="card__title">Срок актуальности профиля</div>
+					<div class="card__subtitle">Через сколько дней без обновления актуальность (A) падает до 0</div>
 				</div>
 				<div class="weight-row__value">
 					<div class="stat__value" style="font-size: 18px;">{w.freshness_d_days}</div>

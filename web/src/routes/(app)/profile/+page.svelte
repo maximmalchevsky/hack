@@ -406,7 +406,7 @@
 
 	<div class="section" style="margin-top: 24px;">
 		<Card title="Исключения" subtitle="Отпуска, больничные, командировки, личные часы">
-			<div class="flex flex-wrap gap-2" style="align-items: end; margin-bottom: 20px;">
+			<div class="flex flex-wrap" style="align-items: end; gap: 16px; margin-bottom: 32px;">
 				<div class="field" style="margin-bottom: 0;">
 					<label class="field__label" for="ek">Тип</label>
 					<select id="ek" bind:value={excKind} style="width: 160px;">
@@ -436,7 +436,12 @@
 			</div>
 
 			{#if exceptions.length === 0}
-				<div class="text-text-3 text-sm">Исключений пока нет.</div>
+				<div
+					class="text-text-3 text-sm"
+					style="padding: 20px; text-align: center; background: var(--surface); border-radius: 8px;"
+				>
+					Исключений пока нет.
+				</div>
 			{:else}
 				<div class="space-y-2">
 					{#each exceptions as e (e.id)}
