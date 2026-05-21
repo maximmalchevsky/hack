@@ -17,6 +17,7 @@ import (
 	"worktimesync/internal/integrations/ical"
 	"worktimesync/internal/integrations/jira"
 	"worktimesync/internal/integrations/yandextracker"
+	"worktimesync/internal/migrator"
 	"worktimesync/internal/server"
 	"worktimesync/internal/workers"
 	"worktimesync/pkg/crypto"
@@ -55,6 +56,11 @@ func main() {
 		log.Fatal().Err(err).Msg("postgres: ping")
 	}
 	log.Info().Msg("postgres: connected")
+
+	// --- Миграции (embedded) ---
+	if err := migrator.Up(db, log); err != nil {
+		log.Fatal().Err(err).Msg("migrator: up")
+	}
 
 	redisOpts, err := redis.ParseURL(cfg.Redis.URL)
 	if err != nil {

@@ -34,26 +34,8 @@ services:
     networks:
       - wts
 
-  migrate:
-    image: migrate/migrate:v4.18.1
-    container_name: wts-migrate
-    depends_on:
-      postgres:
-        condition: service_healthy
-    env_file:
-      - .env
-    volumes:
-      - ./migrations:/migrations
-    # DATABASE_URL берётся из .env (через env_file). $$ — экранирование для compose.
-    entrypoint:
-      - sh
-      - -c
-      - 'migrate -path=/migrations -database="$$DATABASE_URL" up'
-    restart: "no"
-    networks:
-      - wts
-
   api:
+    # Миграции embedded в бинарник api — накатываются сами при старте.
     image: ghcr.io/maximmalchevsky/hack-api:${IMAGE_TAG:-latest}
     container_name: wts-api
     restart: unless-stopped
@@ -62,8 +44,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
     env_file:
       - .env
     ports:
@@ -85,8 +65,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
+      api:
+        # Ждём, пока api прокачает миграции.
+        condition: service_healthy
     env_file:
       - .env
     networks:

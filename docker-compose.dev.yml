@@ -40,23 +40,8 @@ services:
     networks:
       - wts-dev
 
-  migrate:
-    image: migrate/migrate:v4.18.1
-    container_name: wts-dev-migrate
-    depends_on:
-      postgres:
-        condition: service_healthy
-    volumes:
-      - ./migrations:/migrations
-    command:
-      - "-path=/migrations"
-      - "-database=postgres://${POSTGRES_USER:-worktimesync}:${POSTGRES_PASSWORD:-worktimesync_dev_pass}@postgres:5432/${POSTGRES_DB:-worktimesync}?sslmode=disable"
-      - "up"
-    restart: "no"
-    networks:
-      - wts-dev
-
   api:
+    # Миграции embedded в бинарник api — накатываются сами при старте.
     build:
       context: .
       dockerfile: deploy/api.Dockerfile
@@ -67,8 +52,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
     env_file:
       - .env
     # Переопределяем host'ы и CORS: внутри сети это postgres/redis, не localhost.
@@ -99,8 +82,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
+      api:
+        condition: service_healthy
     env_file:
       - .env
     environment:
