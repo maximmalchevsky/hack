@@ -1,0 +1,47 @@
+# env
+.env
+.env.local
+.env.*.local
+
+# Go
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+bin/
+dist/
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Node / SvelteKit
+node_modules/
+.svelte-kit/
+build/
+.output/
+.vercel/
+
+# Docker
+docker-compose.override.yml
+
+# logs
+*.log
+logs/
+
+# временные планы
+tmp/
+
+# сертификаты с приватной информацией — пример коммитим, реальные не
+certs/*.pem
+certs/*.key
+
+# DB dumps
+*.dump
+*.sql.bak

@@ -1,0 +1,30 @@
+# Контекст для web-образа (web/).
+
+# секреты и .env-шаблоны
+.env
+.env.*
+
+# vcs
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+
+# OS
+.DS_Store
+Thumbs.db
+
+# артефакты
+node_modules
+.svelte-kit
+build
+dist
+
+# логи
+*.log
+
+# тестовые / временные
+coverage
+.vite

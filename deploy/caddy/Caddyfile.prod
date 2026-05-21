@@ -1,0 +1,38 @@
+# WorkTime Sync — production reverse-proxy
+# Один домен — фронт + API + WS на same-origin.
+# Let's Encrypt поднимется автоматически при первом запуске Caddy.
+{
+	email {$LETSENCRYPT_EMAIL}
+}
+
+{$DOMAIN} {
+	# API, swagger, healthz, websocket, SSE — на Go-бэкенд.
+	@api path /api/* /swagger* /healthz /metrics /ws/*
+	handle @api {
+		reverse_proxy api:8080 {
+			# SSE / WebSocket: убираем буферизацию ответа.
+			flush_interval -1
+		}
+	}
+
+	# Всё остальное — SvelteKit (adapter-node).
+	handle {
+		reverse_proxy web:3000
+	}
+
+	encode zstd gzip
+
+	log {
+		output file /data/access.log {
+			roll_size 10mb
+			roll_keep 5
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}

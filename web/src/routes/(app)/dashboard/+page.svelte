@@ -6,6 +6,8 @@
 	import Card from '$lib/components/Card.svelte';
 	import Badge from '$lib/components/Badge.svelte';
 	import IncomingInvitesCard from '$lib/components/IncomingInvitesCard.svelte';
+	import PulseCheckCard from '$lib/components/PulseCheckCard.svelte';
+	import PulseTeamCard from '$lib/components/PulseTeamCard.svelte';
 	import type { TimelineEventKind } from '$lib/components/Timeline.svelte';
 	import {
 		listMyEvents,
@@ -334,6 +336,14 @@
 
 <div class="section">
 	<IncomingInvitesCard title="Ждут ответа" />
+</div>
+
+<div class="section">
+	<PulseCheckCard />
+</div>
+
+<div class="section">
+	<PulseTeamCard />
 </div>
 
 {#if summary && summary.ai_text}

@@ -1,0 +1,43 @@
+
+.env
+.env.*
+
+# vcs
+.git
+.gitignore
+.github
+
+# IDE
+.idea
+.vscode
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# доки / план / временное
+docs
+tmp
+plans
+ONBOARDING.md
+README.md
+README.*
+
+# фронт — не нужен в Go-образах
+web
+
+# тесты, артефакты, кэши
+*.test
+*.out
+coverage*
+bin
+build
+dist
+
+# логи
+*.log
+logs
+
+# node-артефакты (на всякий случай)
+node_modules

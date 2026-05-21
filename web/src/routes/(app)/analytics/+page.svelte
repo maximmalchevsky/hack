@@ -369,7 +369,7 @@
 
 	function buildRiskOption(teams: TeamRisk[]) {
 		return {
-			grid: { top: 30, right: 30, bottom: 30, left: 100, containLabel: true },
+			grid: { top: 30, right: 60, bottom: 30, left: 100, containLabel: true },
 			tooltip: {
 				trigger: 'axis',
 				axisPointer: { type: 'shadow' },
@@ -388,7 +388,17 @@
 							borderRadius: [0, 6, 6, 0]
 						}
 					})),
-					barWidth: 22
+					barWidth: 22,
+					// Чтобы при R=0 столбик всё-таки был видимым и не превращался в пустое место.
+					barMinHeight: 3,
+					label: {
+						show: true,
+						position: 'right',
+						formatter: (p: { value: number }) => p.value.toFixed(2),
+						color: '#475569',
+						fontSize: 12,
+						fontWeight: 600
+					}
 				}
 			]
 		};
@@ -687,7 +697,7 @@
 			</div>
 
 			<div class="section grid-2" style="gap: 16px;">
-				<Card title="Динамика A за 8 недель" subtitle="В скоупе выбранных команд">
+				<Card title="Динамика A за 8 недель" subtitle="Свежесть профилей по неделям (в скоупе выбранных команд)" metricLetter="A">
 					<EChart option={teamsTrendOption} height="280px" />
 				</Card>
 				<Card title="Конфликты по дням недели" subtitle="За 30 дней">
@@ -696,7 +706,7 @@
 			</div>
 
 			<div class="section grid-2" style="gap: 16px; margin-top: 16px;">
-				<Card title="Риск по моим командам" subtitle="Средний R по каждой">
+				<Card title="Риск по моим командам" subtitle="Средний интегральный риск каждой команды (шкала 0–1)" metricLetter="R">
 					{#if teamsRisk.length === 0}
 						<div class="text-text-3 text-sm" style="padding: 16px; text-align: center;">
 							Нет данных.
@@ -764,7 +774,7 @@
 		</div>
 
 		<div class="section grid-2" style="gap: 16px; margin-top: 16px;">
-			<Card title="Риск по командам" subtitle="Средний R по последним метрикам участников">
+			<Card title="Риск по командам" subtitle="Средний интегральный риск по последним метрикам участников (шкала 0–1)" metricLetter="R">
 				{#if companyTeams.length === 0}
 					<div class="text-text-3 text-sm" style="padding: 16px; text-align: center;">
 						Команды не созданы.

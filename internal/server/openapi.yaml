@@ -1,0 +1,552 @@
+openapi: 3.1.0
+info:
+  title: WorkTime Sync API
+  version: 0.1.0
+  description: |
+    Веб-платформа для актуализации рабочего времени сотрудников.
+    Endpoints разделены на публичные (`/auth/*`, `/webhooks/*`) и защищённые JWT (всё остальное).
+  contact:
+    name: WorkTime Sync team
+
+servers:
+  - url: http://localhost:8080
+    description: Local dev
+
+tags:
+  - name: auth
+  - name: me
+  - name: profile
+  - name: exceptions
+  - name: integrations
+  - name: events
+  - name: metrics
+  - name: recommendations
+  - name: diagnostics
+  - name: teams
+  - name: scheduler
+  - name: conflicts
+  - name: notifications
+  - name: ai
+  - name: employees
+  - name: hr
+  - name: webhooks
+  - name: admin
+
+paths:
+  /healthz:
+    get:
+      tags: [system]
+      summary: Liveness probe
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+
+  /readyz:
+    get:
+      tags: [system]
+      summary: Readiness probe (db + redis)
+      responses:
+        '200':
+          description: ready
+        '503':
+          description: degraded
+
+  /api/v1/auth/register:
+    post:
+      tags: [auth]
+      summary: Создать пользователя и сразу получить токены
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: Получить access+refresh токены
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [auth]
+      summary: Обменять refresh-токен на новую пару
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refresh: { type: string }
+      responses:
+        '200': { description: ok }
+
+  /api/v1/me:
+    get:
+      tags: [me]
+      security: [{ bearerAuth: [] }]
+      summary: Полная карточка текущего пользователя
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+
+  /api/v1/me/profile:
+    put:
+      tags: [profile]
+      security: [{ bearerAuth: [] }]
+      summary: Обновить мой рабочий профиль (создаёт новую версию)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '201': { description: created }
+
+  /api/v1/me/profile/confirm:
+    post:
+      tags: [profile]
+      security: [{ bearerAuth: [] }]
+      summary: Подтвердить актуальность профиля
+      responses:
+        '204': { description: ok }
+
+  /api/v1/exceptions:
+    get:
+      tags: [exceptions]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: from
+          schema: { type: string, format: date-time }
+        - in: query
+          name: to
+          schema: { type: string, format: date-time }
+      responses:
+        '200': { description: ok }
+    post:
+      tags: [exceptions]
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, start_at, end_at]
+              properties:
+                kind: { type: string, enum: [vacation, sick_leave, business_trip, personal_hours, custom] }
+                start_at: { type: string, format: date-time }
+                end_at: { type: string, format: date-time }
+                comment: { type: string }
+      responses:
+        '201': { description: created }
+
+  /api/v1/integrations:
+    get:
+      tags: [integrations]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: ok }
+
+  /api/v1/integrations/ical:
+    post:
+      tags: [integrations]
+      security: [{ bearerAuth: [] }]
+      summary: Подключить iCal/ICS feed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                feed_url: { type: string }
+                label: { type: string }
+      responses:
+        '201': { description: created }
+
+  /api/v1/integrations/caldav:
+    post:
+      tags: [integrations]
+      security: [{ bearerAuth: [] }]
+      summary: Подключить CalDAV (Yandex/Apple/Nextcloud)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [endpoint, username, password]
+              properties:
+                endpoint: { type: string }
+                username: { type: string }
+                password: { type: string }
+                cal_path: { type: string }
+                label: { type: string }
+      responses:
+        '201': { description: created }
+
+  /api/v1/metrics/employee/{id}:
+    get:
+      tags: [metrics]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmployeeMetrics'
+
+  /api/v1/recommendations:
+    get:
+      tags: [recommendations]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: ok }
+
+  /api/v1/recommendations/generate:
+    post:
+      tags: [recommendations]
+      security: [{ bearerAuth: [] }]
+      summary: Пересобрать рекомендации (rule-based + GigaChat)
+      responses:
+        '200': { description: ok }
+
+  /api/v1/diagnostics/groups:
+    get:
+      tags: [diagnostics]
+      security: [{ bearerAuth: [] }]
+      summary: Группировка сотрудников по актуальности
+      responses:
+        '200': { description: ok }
+
+  /api/v1/teams:
+    get:
+      tags: [teams]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: ok }
+
+  /api/v1/teams/{id}/availability:
+    get:
+      tags: [teams]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+        - in: query
+          name: tz
+          schema: { type: string, example: Europe/Moscow }
+      responses:
+        '200':
+          description: 5 дней × 11 часов × участники
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TeamAvailability'
+
+  /api/v1/teams/{id}/find-window:
+    post:
+      tags: [scheduler]
+      security: [{ bearerAuth: [] }]
+      summary: Подобрать топ-N слотов для встречи команды
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                duration_min: { type: integer, default: 60 }
+                days: { type: integer, default: 7 }
+                tz: { type: string, example: Europe/Moscow }
+                top_n: { type: integer, default: 3 }
+      responses:
+        '200': { description: ok }
+
+  /api/v1/conflicts:
+    get:
+      tags: [conflicts]
+      security: [{ bearerAuth: [] }]
+      summary: Все конфликты по всем сотрудникам
+      responses:
+        '200': { description: ok }
+
+  /api/v1/notifications:
+    get:
+      tags: [notifications]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: ok }
+
+  /api/v1/notifications/stream:
+    get:
+      tags: [notifications]
+      security: [{ bearerAuth: [] }]
+      summary: SSE-стрим (event-source) для real-time push
+      responses:
+        '200':
+          description: SSE-поток
+          content:
+            text/event-stream:
+              schema: { type: string }
+
+  /api/v1/ai/chat:
+    post:
+      tags: [ai]
+      security: [{ bearerAuth: [] }]
+      summary: Запрос к AI-ассистенту (без streaming)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                conversation_id: { type: string, format: uuid }
+                message: { type: string }
+      responses:
+        '200': { description: ok }
+
+  /api/v1/employees:
+    get:
+      tags: [employees]
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { description: ok }
+
+  /api/v1/employees/{id}:
+    get:
+      tags: [employees]
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { description: ok }
+
+  /api/v1/hr/roadmap:
+    get:
+      tags: [hr]
+      security: [{ bearerAuth: [] }]
+      summary: Приоритизированная дорожная карта HR
+      responses:
+        '200': { description: ok }
+
+  /api/v1/webhooks/{provider}:
+    post:
+      tags: [webhooks]
+      summary: Приём webhook'ов от внешних провайдеров
+      description: |
+        Без авторизации — провайдеры подписываются на сервере.
+        Валидация подписи происходит внутри сервиса.
+        MS Graph: validation handshake через ?validationToken=.
+      parameters:
+        - in: path
+          name: provider
+          required: true
+          schema:
+            type: string
+            enum: [ical, caldav, google_calendar, ms365, jira, yandex_tracker]
+      responses:
+        '202': { description: queued }
+
+  /api/v1/admin/users:
+    get:
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      summary: Список пользователей (только admin)
+      responses:
+        '200': { description: ok }
+
+  /api/v1/admin/sources:
+    get:
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      summary: Все интеграции в системе
+      responses:
+        '200': { description: ok }
+
+  /api/v1/admin/rules:
+    get:
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      summary: Текущие веса риска (w1..w5)
+      responses:
+        '200': { description: ok }
+    put:
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      summary: Обновить веса (сумма должна быть = 1.0)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [w1, w2, w3, w4, w5, freshness_d_days]
+              properties:
+                w1: { type: number }
+                w2: { type: number }
+                w3: { type: number }
+                w4: { type: number }
+                w5: { type: number }
+                freshness_d_days: { type: integer }
+      responses:
+        '204': { description: ok }
+
+  /api/v1/admin/system/health:
+    get:
+      tags: [admin]
+      security: [{ bearerAuth: [] }]
+      summary: Сводка по системе
+      responses:
+        '200': { description: ok }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [email, password, full_name]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+        full_name: { type: string }
+        role: { type: string, enum: [admin, employee, manager, hr, pm, analyst] }
+        timezone: { type: string, example: Europe/Moscow }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+
+    AuthResponse:
+      type: object
+      properties:
+        tokens:
+          type: object
+          properties:
+            access: { type: string }
+            refresh: { type: string }
+        user:
+          $ref: '#/components/schemas/User'
+
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        role: { type: string }
+        full_name: { type: string }
+        timezone: { type: string }
+
+    MeResponse:
+      type: object
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        employee: { type: object }
+        work_profile: { type: object }
+        exceptions: { type: array, items: { type: object } }
+
+    UpdateProfileRequest:
+      type: object
+      required: [days_of_week, timezone, work_format]
+      properties:
+        days_of_week:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              start: { type: string, example: "09:00" }
+              end:   { type: string, example: "18:00" }
+        timezone: { type: string, example: Europe/Moscow }
+        work_format: { type: string, enum: [office, remote, hybrid] }
+
+    EmployeeMetrics:
+      type: object
+      properties:
+        employee_id: { type: string, format: uuid }
+        A: { type: number, description: "Актуальность" }
+        C: { type: number, description: "Конфликты ratio" }
+        L: { type: number, description: "Загрузка" }
+        Z: { type: number, description: "TZ-drift" }
+        H: { type: number, description: "HR-mismatch" }
+        R: { type: number, description: "Интегральный риск" }
+
+    TeamAvailability:
+      type: object
+      properties:
+        team_id: { type: string, format: uuid }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        hours: { type: array, items: { type: integer } }
+        days: { type: array, items: { type: string } }
+        rows:
+          type: array
+          items:
+            type: object
+            properties:
+              employee_id: { type: string, format: uuid }
+              full_name: { type: string }
+              timezone: { type: string }
+              cells:
+                type: array
+                items:
+                  type: string
+                  enum: [free, busy, conflict, off]

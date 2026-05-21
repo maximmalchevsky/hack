@@ -6,6 +6,7 @@
 	import Avatar from '$lib/components/Avatar.svelte';
 	import ProfileHistory from '$lib/components/ProfileHistory.svelte';
 	import NotificationChannelsCard from '$lib/components/NotificationChannelsCard.svelte';
+	import TimeBreakdownCard from '$lib/components/TimeBreakdownCard.svelte';
 	import {
 		me,
 		updateMyProfile,
@@ -390,6 +391,10 @@
 	</div>
 
 	{#if meData?.employee?.id}
+		<div class="section" style="margin-top: 24px;">
+			<TimeBreakdownCard />
+		</div>
+
 		<div class="section" style="margin-top: 24px;">
 			<ProfileHistory employeeID={meData.employee.id} />
 		</div>

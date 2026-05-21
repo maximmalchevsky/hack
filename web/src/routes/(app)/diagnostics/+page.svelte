@@ -92,13 +92,13 @@
 	function groupLabel(g: DiagnosticsRow['group']): string {
 		switch (g) {
 			case 'fresh':
-				return 'График актуален';
+				return 'Обновлён недавно';
 			case 'needs_confirm':
-				return 'Просим подтвердить график';
+				return 'Месяц без правок';
 			case 'stale':
-				return 'График устарел';
+				return '2+ месяца без правок';
 			default:
-				return 'Нет графика';
+				return 'Нет рабочего графика';
 		}
 	}
 

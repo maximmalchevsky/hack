@@ -1,0 +1,156 @@
+
+
+name: worktimesync
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: wts-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - wts
+
+  redis:
+    image: redis:7-alpine
+    container_name: wts-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - wts
+
+  migrate:
+    image: migrate/migrate:v4.18.1
+    container_name: wts-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      - "up"
+    restart: "no"
+    networks:
+      - wts
+
+  api:
+    image: ghcr.io/maximmalchevsky/hack-api:${IMAGE_TAG:-latest}
+    container_name: wts-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wts
+
+  worker:
+    image: ghcr.io/maximmalchevsky/hack-worker:${IMAGE_TAG:-latest}
+    container_name: wts-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+    networks:
+      - wts
+
+  scheduler:
+    image: ghcr.io/maximmalchevsky/hack-scheduler:${IMAGE_TAG:-latest}
+    container_name: wts-scheduler
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+    networks:
+      - wts
+
+  web:
+    image: ghcr.io/maximmalchevsky/hack-web:${IMAGE_TAG:-latest}
+    container_name: wts-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    networks:
+      - wts
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: wts-caddy
+    restart: unless-stopped
+    depends_on:
+      - api
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL:-admin@example.com}
+    volumes:
+      - ./deploy/caddy/Caddyfile.prod:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - wts
+
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  wts:
+    driver: bridge

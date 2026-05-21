@@ -1,16 +1,19 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import MetricInfo from './MetricInfo.svelte';
 
 	interface Props {
 		title?: string;
 		subtitle?: string;
 		caption?: string;
 		padded?: boolean;
+		// Если задан — рядом с title появится (i) с расшифровкой метрики.
+		metricLetter?: 'A' | 'C' | 'L' | 'Z' | 'H' | 'R';
 		actions?: Snippet;
 		children?: Snippet;
 	}
 
-	let { title, subtitle, caption, padded = false, actions, children }: Props = $props();
+	let { title, subtitle, caption, padded = false, metricLetter, actions, children }: Props = $props();
 </script>
 
 <div class="card {padded ? 'card--padded' : ''}">
@@ -18,7 +21,12 @@
 		<div class="card__header">
 			<div>
 				{#if caption}<div class="card__caption">{caption}</div>{/if}
-				{#if title}<div class="card__title">{title}</div>{/if}
+				{#if title}
+					<div class="card__title">
+						{title}
+						{#if metricLetter}<MetricInfo letter={metricLetter} size="md" />{/if}
+					</div>
+				{/if}
 				{#if subtitle}<div class="card__subtitle">{subtitle}</div>{/if}
 			</div>
 			{#if actions}<div>{@render actions()}</div>{/if}

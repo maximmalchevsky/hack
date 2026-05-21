@@ -1,0 +1,139 @@
+
+
+name: worktimesync-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: wts-dev-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-worktimesync}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-worktimesync_dev_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-worktimesync}
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-worktimesync} -d ${POSTGRES_DB:-worktimesync}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - wts-dev
+
+  redis:
+    image: redis:7-alpine
+    container_name: wts-dev-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_dev_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - wts-dev
+
+  migrate:
+    image: migrate/migrate:v4.18.1
+    container_name: wts-dev-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://${POSTGRES_USER:-worktimesync}:${POSTGRES_PASSWORD:-worktimesync_dev_pass}@postgres:5432/${POSTGRES_DB:-worktimesync}?sslmode=disable"
+      - "up"
+    restart: "no"
+    networks:
+      - wts-dev
+
+  api:
+    build:
+      context: .
+      dockerfile: deploy/api.Dockerfile
+    container_name: wts-dev-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    # Переопределяем host'ы и CORS: внутри сети это postgres/redis, не localhost.
+    environment:
+      DATABASE_URL: "postgres://${POSTGRES_USER:-worktimesync}:${POSTGRES_PASSWORD:-worktimesync_dev_pass}@postgres:5432/${POSTGRES_DB:-worktimesync}?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      CORS_ALLOWED_ORIGINS: "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173"
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - wts-dev
+
+  worker:
+    build:
+      context: .
+      dockerfile: deploy/worker.Dockerfile
+    container_name: wts-dev-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "postgres://${POSTGRES_USER:-worktimesync}:${POSTGRES_PASSWORD:-worktimesync_dev_pass}@postgres:5432/${POSTGRES_DB:-worktimesync}?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+    networks:
+      - wts-dev
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: deploy/scheduler.Dockerfile
+    container_name: wts-dev-scheduler
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: "postgres://${POSTGRES_USER:-worktimesync}:${POSTGRES_PASSWORD:-worktimesync_dev_pass}@postgres:5432/${POSTGRES_DB:-worktimesync}?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+    networks:
+      - wts-dev
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+
+networks:
+  wts-dev:
+    driver: bridge
