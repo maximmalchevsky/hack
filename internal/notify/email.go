@@ -51,7 +51,7 @@ func (t *EmailTransport) Send(ctx context.Context, msg Message) error {
 	addr := fmt.Sprintf("%s:%d", t.host, t.port)
 	subj := msg.Title
 	if subj == "" {
-		subj = "Уведомление WorkTime Sync"
+		subj = "Уведомление Workie"
 	}
 	body := buildEmailBody(t.baseURL, msg)
 	headers := map[string]string{
@@ -124,7 +124,7 @@ func buildEmailBody(baseURL string, msg Message) string {
 	var sb strings.Builder
 	sb.WriteString(`<!doctype html><html><body style="font-family:system-ui,Arial,sans-serif;color:#0f172a;line-height:1.5;">`)
 	sb.WriteString(`<div style="max-width:540px;margin:0 auto;padding:24px;border:1px solid #e2e8f0;border-radius:12px;">`)
-	sb.WriteString(`<div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;">WorkTime Sync</div>`)
+	sb.WriteString(`<div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;">Workie</div>`)
 	sb.WriteString(`<div style="font-size:20px;font-weight:700;margin:4px 0 14px;">` + htmlEscape(msg.Title) + `</div>`)
 	if msg.Body != "" {
 		sb.WriteString(`<div style="font-size:14px;color:#334155;margin-bottom:18px;">` + htmlEscape(msg.Body) + `</div>`)

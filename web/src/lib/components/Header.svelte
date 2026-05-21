@@ -91,10 +91,10 @@
 
 <header class="header">
 	<div class="header__logo">
-		<div class="header__logo-icon">
-			<i class="ti ti-clock-hour-4"></i>
+		<div class="header__logo-icon header__logo-icon--img">
+			<img src="/logo.png" alt="Workie" />
 		</div>
-		<div class="header__logo-text">WorkTime Sync</div>
+		<div class="header__logo-text">Workie</div>
 	</div>
 
 	<div class="search">

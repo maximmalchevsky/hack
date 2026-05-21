@@ -57,7 +57,7 @@ func (b *ChatContextBuilder) Build(ctx context.Context, userID uuid.UUID) (strin
 	}
 
 	var sb strings.Builder
-	sb.WriteString("# Snapshot системы WorkTime Sync\n\n")
+	sb.WriteString("# Snapshot системы Workie\n\n")
 	fmt.Fprintf(&sb, "Текущее время (UTC): %s\n", now.Format("2006-01-02 15:04"))
 	fmt.Fprintf(&sb, "Пользователь: %s (%s), email %s, TZ %s.\n",
 		user.FullName, ruRole(user.Role), user.Email, user.Timezone)

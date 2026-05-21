@@ -344,7 +344,7 @@ func (s *ExportService) datasetAllEmployees(ctx context.Context, opts DatasetOpt
 
 	ds := &ExportDataset{
 		Kind:    string(ExportAllEmployees),
-		Title:   "Сотрудники WorkTime Sync",
+		Title:   "Сотрудники Workie",
 		Headers: []string{"ФИО", "Email", "Роль", "Должность", "Отдел", "Часовой пояс", "Формат", "Последнее обновление"},
 	}
 	for rows.Next() {

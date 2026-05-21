@@ -98,7 +98,7 @@ func (s *Server) registerRoutes() {
 	api := s.app.Group("/api/v1")
 	api.Get("/", func(c fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"name":    "WorkTime Sync API",
+			"name":    "Workie API",
 			"version": "0.1.0",
 		})
 	})
@@ -250,7 +250,7 @@ func (s *Server) healthz(c fiber.Ctx) error {
 func (s *Server) swaggerUI(c fiber.Ctx) error {
 	c.Set("Content-Type", "text/html; charset=utf-8")
 	return c.SendString(`<!DOCTYPE html>
-<html><head><title>WorkTime Sync API</title>
+<html><head><title>Workie API</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css">
 </head><body>
 <div id="swagger-ui"></div>

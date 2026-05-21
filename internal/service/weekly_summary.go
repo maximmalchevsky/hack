@@ -259,7 +259,7 @@ func (s *WeeklySummaryService) tryAIText(ctx context.Context, name string, sm *W
 		"next_exception": sm.NextException,
 	})
 	systemMsg := strings.Join([]string{
-		"Ты — корпоративный ассистент WorkTime Sync.",
+		"Ты — корпоративный ассистент Workie.",
 		"На вход — JSON со сводкой рабочей недели одного сотрудника.",
 		"Сгенерируй короткий (2-3 предложения) дружелюбный комментарий на русском.",
 		"",

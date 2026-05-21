@@ -30,11 +30,11 @@
 
 <div class="card card--padded">
 	<div class="flex flex-col items-center gap-3 mb-6">
-		<div class="header__logo-icon" style="width: 40px; height: 40px; font-size: 22px;">
-			<i class="ti ti-clock-hour-4"></i>
+		<div class="header__logo-icon header__logo-icon--img" style="width: 128px; height: 128px;">
+			<img src="/logo.png" alt="Workie" />
 		</div>
 		<div class="text-center">
-			<div class="text-base font-medium">Войти в WorkTime Sync</div>
+			<div class="text-base font-medium">Войти в Workie</div>
 			<div class="text-text-2 text-xs mt-1">Используй корпоративную почту</div>
 		</div>
 	</div>

@@ -1,12 +1,12 @@
 openapi: 3.1.0
 info:
-  title: WorkTime Sync API
+  title: Workie API
   version: 0.1.0
   description: |
     Веб-платформа для актуализации рабочего времени сотрудников.
     Endpoints разделены на публичные (`/auth/*`, `/webhooks/*`) и защищённые JWT (всё остальное).
   contact:
-    name: WorkTime Sync team
+    name: Workie team
 
 servers:
   - url: http://localhost:8080

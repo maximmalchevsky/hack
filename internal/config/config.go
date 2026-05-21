@@ -30,7 +30,7 @@ type SMTP struct {
 	Port     int    `env:"SMTP_PORT" envDefault:"587"`
 	User     string `env:"SMTP_USER"`
 	Pass     string `env:"SMTP_PASS"`
-	From     string `env:"SMTP_FROM"`           // e.g. WorkTime Sync <no-reply@worktime.local>
+	From     string `env:"SMTP_FROM"`           // e.g. Workie <no-reply@worktime.local>
 	StartTLS bool   `env:"SMTP_STARTTLS" envDefault:"true"`
 }
 

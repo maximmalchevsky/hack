@@ -79,7 +79,7 @@ func (b *Bot) onStart(c tele.Context) error {
 	payload := strings.TrimSpace(c.Message().Payload)
 	if payload == "" {
 		return c.Send(
-			"Привет! Это бот WorkTime Sync.\n\n" +
+			"Привет! Это бот Workie.\n\n" +
 				"Чтобы получать уведомления о встречах и подтверждениях, открой " +
 				"свой профиль в системе → раздел «Каналы уведомлений» → " +
 				"«Подключить Telegram». Ссылка из системы привяжет твой аккаунт.",
@@ -99,7 +99,7 @@ func (b *Bot) onStart(c tele.Context) error {
 	var email string
 	if err := b.pool.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, userID).Scan(&email); err != nil {
 		b.log.Warn().Err(err).Str("user_id", userID.String()).Msg("telegram bind: user not found")
-		return c.Send("Пользователь не найден в системе. Перезайди в WorkTime Sync и попробуй снова.")
+		return c.Send("Пользователь не найден в системе. Перезайди в Workie и попробуй снова.")
 	}
 
 	if _, err := b.pool.Exec(ctx, `
@@ -139,7 +139,7 @@ func (b *Bot) onStop(c tele.Context) error {
 
 func (b *Bot) onHelp(c tele.Context) error {
 	return c.Send(
-		"WorkTime Sync · бот уведомлений.\n\n" +
+		"Workie · бот уведомлений.\n\n" +
 			"Команды:\n" +
 			"• /start <id> — привязка к аккаунту (открой из профиля)\n" +
 			"• /stop — отключить уведомления\n" +
@@ -149,7 +149,7 @@ func (b *Bot) onHelp(c tele.Context) error {
 
 func (b *Bot) onText(c tele.Context) error {
 	return c.Send(
-		"Я только пересылаю уведомления из WorkTime Sync.\n" +
+		"Я только пересылаю уведомления из Workie.\n" +
 			"Для управления — заходи в систему: /help, /stop.",
 	)
 }

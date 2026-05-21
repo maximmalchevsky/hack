@@ -334,7 +334,7 @@
 		return `
 			<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;border-bottom:2px solid #3b82f6;padding-bottom:10px;">
 				<div>
-					<div style="font-size:11px;color:#64748b;letter-spacing:.5px;text-transform:uppercase;">WorkTime Sync · отчёт</div>
+					<div style="font-size:11px;color:#64748b;letter-spacing:.5px;text-transform:uppercase;">Workie · отчёт</div>
 					<div style="font-size:22px;font-weight:700;color:#0f172a;margin-top:2px;word-spacing:0.25em;">${escapeHtml(ds.title).replace(/ /g, '&nbsp;')}</div>
 					${filtersLine}
 				</div>
