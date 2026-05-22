@@ -107,6 +107,19 @@ func (s *RecommendationService) Apply(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+// Snooze — отложить рекомендацию на N дней. По умолчанию — 7.
+func (s *RecommendationService) Snooze(ctx context.Context, id uuid.UUID, days int) error {
+	if days <= 0 {
+		days = 7
+	}
+	until := time.Now().UTC().AddDate(0, 0, days)
+	err := s.repo.Snooze(ctx, id, until)
+	if errors.Is(err, repository.ErrNotFound) {
+		return fmt.Errorf("recommendation not found")
+	}
+	return err
+}
+
 func (s *RecommendationService) Dismiss(ctx context.Context, id uuid.UUID) error {
 	err := s.repo.SetStatus(ctx, id, domain.RecStatusDismissed)
 	if errors.Is(err, repository.ErrNotFound) {

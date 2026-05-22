@@ -11,6 +11,8 @@ export interface CalendarEvent {
 	organizer?: string;
 	status: 'confirmed' | 'tentative' | 'cancelled';
 	is_excluded?: boolean;
+	// Тип встречи. Пусто = ещё не классифицировано.
+	category?: string;
 }
 
 export const listMyEvents = (from: string, to: string) => {
@@ -19,6 +21,14 @@ export const listMyEvents = (from: string, to: string) => {
 		`/api/v1/me/events?${q}`
 	);
 };
+
+// setEventCategory — выставляет/сбрасывает категорию своей встречи.
+// Пустая строка = сбрасывает (тогда GigaChat пере-классифицирует при подсчёте).
+export const setEventCategory = (eventID: string, category: string) =>
+	api.patch<{ ok: boolean; category: string }>(
+		`/api/v1/me/events/${eventID}/category`,
+		{ category }
+	);
 
 export interface DayHours {
 	start: string;

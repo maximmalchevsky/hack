@@ -9,6 +9,7 @@
 		getTeamTimeBreakdown,
 		type TimeBreakdown
 	} from '$lib/api/time-breakdown';
+	import { ApiError } from '$lib/api/client';
 
 	interface Props {
 		// Если задан — рисуем агрегат по команде. Иначе — личный.
@@ -21,6 +22,7 @@
 	let data = $state<TimeBreakdown | null>(null);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
+	let forbidden = $state(false);
 	let days = $state(30);
 
 	// Палитра под категории. Берём с разворотом для контраста.
@@ -34,12 +36,18 @@
 	async function load(currentTeam: string | undefined, currentDays: number) {
 		loading = true;
 		error = null;
+		forbidden = false;
 		try {
 			data = currentTeam
 				? await getTeamTimeBreakdown(currentTeam, currentDays)
 				: await getMyTimeBreakdown(currentDays);
 		} catch (e) {
-			error = e instanceof Error ? e.message : String(e);
+			// 403 — не наша команда, просто не показываем карточку.
+			if (e instanceof ApiError && e.status === 403) {
+				forbidden = true;
+			} else {
+				error = e instanceof Error ? e.message : String(e);
+			}
 		} finally {
 			loading = false;
 		}
@@ -87,6 +95,7 @@
 	}
 </script>
 
+{#if !forbidden}
 <Card
 	title={titleOverride ?? 'Куда уходит время'}
 	subtitle={teamID
@@ -157,6 +166,7 @@
 		</div>
 	{/if}
 </Card>
+{/if}
 
 <style>
 	.tb {

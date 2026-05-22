@@ -36,6 +36,39 @@ func (s *TeamService) List(ctx context.Context) ([]domain.Team, error) {
 	return s.teams.List(ctx)
 }
 
+// ListVisible — RBAC-фильтр списка команд:
+//   - admin/hr/analyst — все команды
+//   - manager/pm — только где он owner ИЛИ участник
+//   - employee — только где он участник
+func (s *TeamService) ListVisible(ctx context.Context, role string, empID uuid.UUID) ([]domain.Team, error) {
+	switch role {
+	case "admin", "hr", "analyst":
+		return s.teams.List(ctx)
+	}
+	if empID == uuid.Nil {
+		return []domain.Team{}, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT t.id, t.name, t.owner_id, t.created_at
+		FROM teams t
+		LEFT JOIN team_members tm ON tm.team_id = t.id
+		WHERE t.owner_id = $1 OR tm.employee_id = $1
+		ORDER BY t.name
+	`, empID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.Team{}
+	for rows.Next() {
+		var t domain.Team
+		if err := rows.Scan(&t.ID, &t.Name, &t.OwnerID, &t.CreatedAt); err == nil {
+			out = append(out, t)
+		}
+	}
+	return out, rows.Err()
+}
+
 func (s *TeamService) ByID(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
 	t, err := s.teams.ByID(ctx, id)
 	if errors.Is(err, repository.ErrNotFound) {

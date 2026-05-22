@@ -175,9 +175,11 @@ func main() {
 	h.Register(mux)
 
 	// Telegram-бот (long-polling). Если токен не задан — bot == nil и горутина не запускается.
+	pulseSvc := service.NewPulseService(db)
 	if tgBot, err := notify.NewBot(cfg.Telegram.BotToken, db, log); err != nil {
 		log.Warn().Err(err).Msg("telegram bot init failed")
 	} else if tgBot != nil {
+		tgBot.WithPulse(pulseSvc)
 		go tgBot.Run(ctx)
 	}
 

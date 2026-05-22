@@ -6,16 +6,21 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 
+	"worktimesync/internal/domain"
+	"worktimesync/internal/middleware"
 	"worktimesync/internal/service"
 )
 
 type ExportHandler struct {
-	svc *service.ExportService
+	svc  *service.ExportService
+	pool *pgxpool.Pool
 }
 
-func NewExportHandler(svc *service.ExportService) *ExportHandler {
-	return &ExportHandler{svc: svc}
+func NewExportHandler(svc *service.ExportService, pool *pgxpool.Pool) *ExportHandler {
+	return &ExportHandler{svc: svc, pool: pool}
 }
 
 func (h *ExportHandler) Mount(r fiber.Router) {
@@ -37,6 +42,27 @@ func (h *ExportHandler) Mount(r fiber.Router) {
 func (h *ExportHandler) download(c fiber.Ctx) error {
 	kind := service.ExportKind(c.Params("kind"))
 	opts := parseDatasetOptions(c)
+
+	// --- RBAC ---
+	role := middleware.CurrentRole(c)
+	empID := middleware.EmployeeID(c)
+	switch role {
+	case domain.RoleAdmin, domain.RoleHR:
+		// видят всё — без ограничений
+	case domain.RoleManager, domain.RolePM:
+		// видят только участников своих команд
+		if empID == uuid.Nil {
+			return fiber.NewError(fiber.StatusUnauthorized, "no employee")
+		}
+		ids, err := h.teamEmpIDs(c, empID)
+		if err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, err.Error())
+		}
+		opts.RestrictEmpIDs = ids
+	default:
+		// employee / analyst — выгрузки запрещены
+		return fiber.NewError(fiber.StatusForbidden, "выгрузки доступны только руководителям, HR и админам")
+	}
 
 	if c.Query("format") == "json" {
 		ds, err := h.svc.BuildDataset(c.Context(), kind, opts)
@@ -127,5 +153,31 @@ func splitCSV(v string) []string {
 
 func hasFilters(opts service.DatasetOptions) bool {
 	return opts.From != nil || opts.To != nil ||
-		len(opts.Departments) > 0 || len(opts.Columns) > 0 || len(opts.Kinds) > 0
+		len(opts.Departments) > 0 || len(opts.Columns) > 0 ||
+		len(opts.Kinds) > 0 || len(opts.RestrictEmpIDs) > 0
+}
+
+// teamEmpIDs — список employee_id всех участников команд, где ownerEmpID — owner.
+// Используется в RBAC: manager/pm видят выгрузку только по своим командам.
+func (h *ExportHandler) teamEmpIDs(c fiber.Ctx, ownerEmpID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := h.pool.Query(c.Context(), `
+		SELECT DISTINCT tm.employee_id
+		FROM team_members tm
+		JOIN teams t ON t.id = tm.team_id
+		WHERE t.owner_id = $1
+	`, ownerEmpID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err == nil {
+			out = append(out, id)
+		}
+	}
+	// Сам менеджер тоже виден.
+	out = append(out, ownerEmpID)
+	return out, nil
 }

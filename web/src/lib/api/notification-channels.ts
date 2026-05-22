@@ -1,9 +1,13 @@
 import { api } from './client';
 
+export type NotifyMinPriority = 'low' | 'medium' | 'high';
+
 export interface NotificationPrefs {
 	email_notifications: boolean;
 	telegram_notifications: boolean;
 	telegram_linked: boolean;
+	notify_kinds: string[];
+	notify_min_priority: NotifyMinPriority;
 }
 
 export interface TelegramStatus {
@@ -18,6 +22,8 @@ export const getNotificationPrefs = () =>
 export const updateNotificationPrefs = (body: {
 	email_notifications?: boolean;
 	telegram_notifications?: boolean;
+	notify_kinds?: string[];
+	notify_min_priority?: NotifyMinPriority;
 }) => api.patch<NotificationPrefs>('/api/v1/me/notification-prefs', body);
 
 export const getTelegramStatus = () => api.get<TelegramStatus>('/api/v1/me/telegram');

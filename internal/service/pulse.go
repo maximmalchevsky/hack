@@ -42,6 +42,13 @@ const PulseInterval = 14
 
 var ErrInvalidScore = errors.New("pulse: score must be 1..5")
 
+// SubmitFromBot — обёртка для notify.Bot (он не хочет тащить service-пакет
+// и тип PulseEntry, ему важна только ошибка).
+func (s *PulseService) SubmitFromBot(ctx context.Context, empID uuid.UUID, score int) error {
+	_, err := s.Submit(ctx, empID, score, "")
+	return err
+}
+
 // Submit — записывает ответ сотрудника.
 func (s *PulseService) Submit(ctx context.Context, empID uuid.UUID, score int, comment string) (*PulseEntry, error) {
 	if score < 1 || score > 5 {

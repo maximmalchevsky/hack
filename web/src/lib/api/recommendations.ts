@@ -38,3 +38,6 @@ export const applyRecommendation = (id: string) =>
 
 export const dismissRecommendation = (id: string) =>
 	api.post<void>(`/api/v1/recommendations/${id}/dismiss`);
+
+export const snoozeRecommendation = (id: string, days = 7) =>
+	api.post<void>(`/api/v1/recommendations/${id}/snooze?days=${days}`);

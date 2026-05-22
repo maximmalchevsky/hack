@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/xuri/excelize/v2"
 )
@@ -90,6 +91,23 @@ type DatasetOptions struct {
 	// vacation | sick_leave | business_trip | personal_hours | custom.
 	// Пусто — все.
 	Kinds []string
+	// RBAC: если задан, выгрузка ограничена только этими сотрудниками.
+	// Используется для manager/pm — они видят только участников своих команд.
+	// admin/hr ставят nil — видят всех.
+	RestrictEmpIDs []uuid.UUID
+}
+
+// restrictedSet — вспомогательный set для O(1) lookup в циклах после SQL.
+// Возвращает nil если ограничения нет (т.е. все проходят).
+func (opts *DatasetOptions) restrictedSet() map[string]struct{} {
+	if len(opts.RestrictEmpIDs) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(opts.RestrictEmpIDs))
+	for _, id := range opts.RestrictEmpIDs {
+		out[id.String()] = struct{}{}
+	}
+	return out
 }
 
 // BuildDataset — то же что Build, но в JSON-формате (без XLSX-сериализации).
@@ -208,7 +226,7 @@ func (s *ExportService) datasetUpcomingVacations(ctx context.Context, opts Datas
 		to = *opts.To
 	}
 
-	// Базовый запрос с переменным набором условий (departments / kinds — необязательны).
+	// Базовый запрос с переменным набором условий (departments / kinds / rbac — необязательны).
 	args := []any{from, to}
 	extra := ""
 	if len(opts.Departments) > 0 {
@@ -218,6 +236,10 @@ func (s *ExportService) datasetUpcomingVacations(ctx context.Context, opts Datas
 	if len(opts.Kinds) > 0 {
 		args = append(args, opts.Kinds)
 		extra += fmt.Sprintf(" AND te.kind::text = ANY($%d::text[])", len(args))
+	}
+	if len(opts.RestrictEmpIDs) > 0 {
+		args = append(args, opts.RestrictEmpIDs)
+		extra += fmt.Sprintf(" AND e.id = ANY($%d::uuid[])", len(args))
 	}
 
 	rows, err := s.pool.Query(ctx, `
@@ -271,9 +293,15 @@ func (s *ExportService) datasetStaleProfiles(ctx context.Context, opts DatasetOp
 	all = append(all, groups.NeedsConfirm...)
 	all = append(all, groups.Unknown...)
 	deptSet := makeStringSet(opts.Departments)
+	rbacSet := opts.restrictedSet()
 	for _, r := range all {
 		if !inStringSet(deptSet, r.Department) {
 			continue
+		}
+		if rbacSet != nil {
+			if _, ok := rbacSet[r.EmployeeID]; !ok {
+				continue
+			}
 		}
 		lastUpd := ""
 		if r.LastProfileUpdateAt != nil {
@@ -312,9 +340,15 @@ func (s *ExportService) datasetConflicts(ctx context.Context, opts DatasetOption
 		Headers: []string{"Сотрудник", "Отдел", "Событие", "Начало", "Окончание", "Причина", "Серьёзность"},
 	}
 	deptSet := makeStringSet(opts.Departments)
+	rbacSet := opts.restrictedSet()
 	for _, c := range list {
 		if !inStringSet(deptSet, c.Department) {
 			continue
+		}
+		if rbacSet != nil {
+			if _, ok := rbacSet[c.EmployeeID.String()]; !ok {
+				continue
+			}
 		}
 		ds.Rows = append(ds.Rows, []any{
 			c.FullName, c.Department, c.Title,
@@ -329,10 +363,18 @@ func (s *ExportService) datasetConflicts(ctx context.Context, opts DatasetOption
 
 func (s *ExportService) datasetAllEmployees(ctx context.Context, opts DatasetOptions) (*ExportDataset, error) {
 	args := []any{}
-	deptClause := ""
+	conds := []string{}
 	if len(opts.Departments) > 0 {
 		args = append(args, opts.Departments)
-		deptClause = " WHERE e.department = ANY($1::text[])"
+		conds = append(conds, fmt.Sprintf("e.department = ANY($%d::text[])", len(args)))
+	}
+	if len(opts.RestrictEmpIDs) > 0 {
+		args = append(args, opts.RestrictEmpIDs)
+		conds = append(conds, fmt.Sprintf("e.id = ANY($%d::uuid[])", len(args)))
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT u.full_name, u.email, u.role, COALESCE(e.department, ''),
@@ -342,7 +384,7 @@ func (s *ExportService) datasetAllEmployees(ctx context.Context, opts DatasetOpt
 		       e.last_profile_update_at
 		FROM employees e
 		JOIN users u ON u.id = e.user_id
-		LEFT JOIN work_profiles wp ON wp.employee_id = e.id AND wp.valid_to IS NULL`+deptClause+`
+		LEFT JOIN work_profiles wp ON wp.employee_id = e.id AND wp.valid_to IS NULL`+where+`
 		ORDER BY u.full_name
 	`, args...)
 	if err != nil {

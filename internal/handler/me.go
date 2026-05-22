@@ -2,6 +2,8 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
+	"slices"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -53,6 +55,39 @@ func (h *MeHandler) WeeklySummary(c fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(res)
+}
+
+// SetEventCategory — PATCH /api/v1/me/events/:id/category
+// Меняет категорию своей встречи. Принимает пустую строку → сбрасывает в NULL,
+// тогда при следующем подсчёте «куда уходит время» GigaChat пере-классифицирует.
+type setEventCategoryRequest struct {
+	Category string `json:"category"`
+}
+
+func (h *MeHandler) SetEventCategory(c fiber.Ctx) error {
+	empID := middleware.EmployeeID(c)
+	if empID == uuid.Nil {
+		return fiber.NewError(fiber.StatusBadRequest, "no employee linked to user")
+	}
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid event id")
+	}
+	var req setEventCategoryRequest
+	if err := json.Unmarshal(c.Body(), &req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
+	}
+	// Валидация: либо пусто (сброс), либо одно из канонических значений.
+	if req.Category != "" && !slices.Contains(service.TimeBreakdownCategories, req.Category) {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid category")
+	}
+	if err := h.events.SetCategory(c.Context(), id, empID, req.Category); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return fiber.NewError(fiber.StatusNotFound, "event not found")
+		}
+		return err
+	}
+	return c.JSON(fiber.Map{"ok": true, "category": req.Category})
 }
 
 // Events — GET /api/v1/me/events?from=...&to=...
@@ -131,9 +166,11 @@ func (h *MeHandler) WithTelegramBotUsername(name string) *MeHandler {
 // --- Каналы уведомлений: email / telegram ---
 
 type notificationPrefsResponse struct {
-	EmailNotifications    bool `json:"email_notifications"`
-	TelegramNotifications bool `json:"telegram_notifications"`
-	TelegramLinked        bool `json:"telegram_linked"`
+	EmailNotifications    bool     `json:"email_notifications"`
+	TelegramNotifications bool     `json:"telegram_notifications"`
+	TelegramLinked        bool     `json:"telegram_linked"`
+	NotifyKinds           []string `json:"notify_kinds"`
+	NotifyMinPriority     string   `json:"notify_min_priority"`
 }
 
 // NotificationPrefs — GET текущие настройки каналов.
@@ -143,27 +180,37 @@ func (h *MeHandler) NotificationPrefs(c fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "no user")
 	}
 	var (
-		emailOn bool
-		tgOn    bool
-		tgChat  *string
+		emailOn  bool
+		tgOn     bool
+		tgChat   *string
+		kinds    []string
+		minPrio  string
 	)
 	if err := h.pool.QueryRow(c.Context(), `
-		SELECT email_notifications, telegram_notifications, telegram_chat_id
+		SELECT email_notifications, telegram_notifications, telegram_chat_id,
+		       notify_kinds, notify_min_priority
 		FROM users WHERE id = $1
-	`, uid).Scan(&emailOn, &tgOn, &tgChat); err != nil {
+	`, uid).Scan(&emailOn, &tgOn, &tgChat, &kinds, &minPrio); err != nil {
 		return err
+	}
+	if kinds == nil {
+		kinds = []string{}
 	}
 	return c.JSON(notificationPrefsResponse{
 		EmailNotifications:    emailOn,
 		TelegramNotifications: tgOn,
 		TelegramLinked:        tgChat != nil && *tgChat != "",
+		NotifyKinds:           kinds,
+		NotifyMinPriority:     minPrio,
 	})
 }
 
-// UpdateNotificationPrefs — PATCH email_notifications/telegram_notifications.
+// UpdateNotificationPrefs — PATCH каналы / типы / минимальный приоритет.
 type notificationPrefsRequest struct {
-	EmailNotifications    *bool `json:"email_notifications,omitempty"`
-	TelegramNotifications *bool `json:"telegram_notifications,omitempty"`
+	EmailNotifications    *bool     `json:"email_notifications,omitempty"`
+	TelegramNotifications *bool     `json:"telegram_notifications,omitempty"`
+	NotifyKinds           *[]string `json:"notify_kinds,omitempty"`
+	NotifyMinPriority     *string   `json:"notify_min_priority,omitempty"`
 }
 
 func (h *MeHandler) UpdateNotificationPrefs(c fiber.Ctx) error {
@@ -175,16 +222,26 @@ func (h *MeHandler) UpdateNotificationPrefs(c fiber.Ctx) error {
 	if err := json.Unmarshal(c.Body(), &req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
 	}
-	if req.EmailNotifications == nil && req.TelegramNotifications == nil {
+	if req.EmailNotifications == nil && req.TelegramNotifications == nil &&
+		req.NotifyKinds == nil && req.NotifyMinPriority == nil {
 		return fiber.NewError(fiber.StatusBadRequest, "nothing to update")
 	}
-	// Точечный UPDATE — COALESCE на nil-ах.
+	if req.NotifyMinPriority != nil {
+		switch *req.NotifyMinPriority {
+		case "low", "medium", "high":
+		default:
+			return fiber.NewError(fiber.StatusBadRequest, "invalid notify_min_priority")
+		}
+	}
 	if _, err := h.pool.Exec(c.Context(), `
 		UPDATE users
 		SET email_notifications    = COALESCE($1, email_notifications),
-		    telegram_notifications = COALESCE($2, telegram_notifications)
-		WHERE id = $3
-	`, req.EmailNotifications, req.TelegramNotifications, uid); err != nil {
+		    telegram_notifications = COALESCE($2, telegram_notifications),
+		    notify_kinds           = COALESCE($3::text[], notify_kinds),
+		    notify_min_priority    = COALESCE($4, notify_min_priority)
+		WHERE id = $5
+	`, req.EmailNotifications, req.TelegramNotifications,
+		req.NotifyKinds, req.NotifyMinPriority, uid); err != nil {
 		return err
 	}
 	return h.NotificationPrefs(c)

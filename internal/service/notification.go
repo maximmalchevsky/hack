@@ -113,13 +113,38 @@ func (s *NotificationService) dispatchToTransports(userID uuid.UUID, n domain.No
 		emailOn     bool
 		tgChat      *string
 		tgOn        bool
+		kinds       []string
+		minPriority string
 	)
 	if err := s.pool.QueryRow(ctx, `
 		SELECT u.email, u.full_name,
-		       u.email_notifications, u.telegram_chat_id, u.telegram_notifications
+		       u.email_notifications, u.telegram_chat_id, u.telegram_notifications,
+		       u.notify_kinds, u.notify_min_priority
 		FROM users u WHERE u.id = $1
-	`, userID).Scan(&email, &name, &emailOn, &tgChat, &tgOn); err != nil {
+	`, userID).Scan(&email, &name, &emailOn, &tgChat, &tgOn, &kinds, &minPriority); err != nil {
 		log.Warn().Err(err).Str("user_id", userID.String()).Msg("notify: load prefs failed")
+		return
+	}
+
+	// Фильтр по типу: если задан непустой список — пропускаем все, кроме него.
+	if len(kinds) > 0 {
+		allowed := false
+		for _, k := range kinds {
+			if k == n.Kind {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return
+		}
+	}
+
+	// Фильтр по минимальному приоритету. Маппинг приоритета по kind:
+	// high: meeting_*, event_reminder; medium: recommendation, pulse_check_due, system;
+	// low: team_digest, weekly_summary, stale_profile.
+	pr := priorityOfKind(n.Kind)
+	if priorityRank(pr) < priorityRank(minPriority) {
 		return
 	}
 
@@ -174,6 +199,34 @@ func (s *NotificationService) MarkRead(ctx context.Context, id, userID uuid.UUID
 
 func (s *NotificationService) MarkAllRead(ctx context.Context, userID uuid.UUID) error {
 	return s.repo.MarkAllRead(ctx, userID)
+}
+
+// priorityOfKind — какой «приоритет» у уведомления данного типа.
+// Используется для фильтра notify_min_priority в dispatchToTransports.
+func priorityOfKind(kind string) string {
+	switch kind {
+	case "meeting_proposal", "meeting_reminder", "meeting_response",
+		"meeting_updated", "meeting_cancelled", "event_reminder":
+		return "high"
+	case "recommendation", "pulse_check_due", "system":
+		return "medium"
+	case "team_digest", "weekly_summary", "stale_profile":
+		return "low"
+	default:
+		return "medium"
+	}
+}
+
+// priorityRank — для сравнения low < medium < high.
+func priorityRank(p string) int {
+	switch p {
+	case "high":
+		return 2
+	case "medium":
+		return 1
+	default:
+		return 0
+	}
 }
 
 func notificationToMap(n domain.Notification) map[string]any {

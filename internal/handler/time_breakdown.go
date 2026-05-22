@@ -35,17 +35,22 @@ func (h *TimeBreakdownHandler) team(c fiber.Ctx) error {
 	role := middleware.CurrentRole(c)
 	empID := middleware.EmployeeID(c)
 
-	// RBAC: admin/HR — везде, остальные — только если они owner команды.
-	if role != domain.RoleAdmin && role != domain.RoleHR {
+	// RBAC: admin/HR/analyst — везде, остальные — только если они owner ИЛИ участник команды.
+	if role != domain.RoleAdmin && role != domain.RoleHR && role != domain.RoleAnalyst {
 		var ownerID uuid.UUID
-		err := h.pool.QueryRow(c.Context(), `SELECT owner_id FROM teams WHERE id = $1`, teamID).Scan(&ownerID)
+		var isMember bool
+		err := h.pool.QueryRow(c.Context(), `
+			SELECT t.owner_id,
+			       EXISTS(SELECT 1 FROM team_members tm WHERE tm.team_id = t.id AND tm.employee_id = $2) AS is_member
+			FROM teams t WHERE t.id = $1
+		`, teamID, empID).Scan(&ownerID, &isMember)
 		if err != nil {
 			if err == pgx.ErrNoRows {
 				return fiber.NewError(fiber.StatusNotFound, "team not found")
 			}
 			return err
 		}
-		if ownerID != empID {
+		if ownerID != empID && !isMember {
 			return fiber.NewError(fiber.StatusForbidden, "forbidden")
 		}
 	}

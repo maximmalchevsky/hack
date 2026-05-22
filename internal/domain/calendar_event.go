@@ -33,5 +33,9 @@ type CalendarEvent struct {
 	Organizer         string
 	Status            EventStatus
 	IsExcluded        bool
-	FetchedAt         time.Time
+	// Category — категория встречи («Стендапы», «1:1», …). Либо выбрана
+	// пользователем при создании/редактировании, либо проставлена GigaChat'ом
+	// при первом подсчёте «куда уходит время». NULL = ещё не классифицировано.
+	Category  *string
+	FetchedAt time.Time
 }

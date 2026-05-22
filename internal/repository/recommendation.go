@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -76,6 +77,7 @@ func (r *RecommendationRepo) ListByEmployee(ctx context.Context, employeeID uuid
 		FROM recommendations
 		WHERE employee_id = $1
 		  AND ($2::text[] IS NULL OR status::text = ANY($2::text[]))
+		  AND (snoozed_until IS NULL OR snoozed_until <= now())
 		ORDER BY
 			CASE priority
 				WHEN 'critical' THEN 0
@@ -117,6 +119,7 @@ func (r *RecommendationRepo) ListAll(ctx context.Context, statuses []domain.Reco
 		       created_at, updated_at
 		FROM recommendations
 		WHERE ($1::text[] IS NULL OR status::text = ANY($1::text[]))
+		  AND (snoozed_until IS NULL OR snoozed_until <= now())
 		ORDER BY
 			CASE priority
 				WHEN 'critical' THEN 0
@@ -161,6 +164,7 @@ func (r *RecommendationRepo) ListByManager(ctx context.Context, managerEmployeeI
 		JOIN employees e ON e.id = r.employee_id
 		WHERE e.manager_id = $1
 		  AND ($2::text[] IS NULL OR r.status::text = ANY($2::text[]))
+		  AND (r.snoozed_until IS NULL OR r.snoozed_until <= now())
 		ORDER BY
 			CASE r.priority
 				WHEN 'critical' THEN 0
@@ -185,6 +189,20 @@ func (r *RecommendationRepo) ListByManager(ctx context.Context, managerEmployeeI
 		out = append(out, *rec)
 	}
 	return out, rows.Err()
+}
+
+// Snooze — отложить рекомендацию до указанного момента (она не будет показываться в List).
+func (r *RecommendationRepo) Snooze(ctx context.Context, id uuid.UUID, until time.Time) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE recommendations SET snoozed_until = $2 WHERE id = $1
+	`, id, until)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // SetStatus — apply / dismiss / seen.

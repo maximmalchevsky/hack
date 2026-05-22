@@ -123,7 +123,21 @@ export interface ProposeMeetingResult {
 	yandex_pushed?: number;
 }
 
+// MEETING_CATEGORIES — фиксированный список значений, должен совпадать с
+// service.TimeBreakdownCategories на бэке. Пустое значение в UI означает
+// «определить автоматически» (GigaChat при подсчёте «куда уходит время»).
+export const MEETING_CATEGORIES = [
+	'Стендапы',
+	'1:1',
+	'Ревью',
+	'Планирование',
+	'Интервью',
+	'Командные созвоны',
+	'Другое'
+] as const;
+export type MeetingCategory = (typeof MEETING_CATEGORIES)[number];
+
 export const proposeMeeting = (
 	teamID: string,
-	body: { start_at: string; end_at: string; title?: string }
+	body: { start_at: string; end_at: string; title?: string; category?: string }
 ) => api.post<ProposeMeetingResult>(`/api/v1/teams/${teamID}/propose-meeting`, body);

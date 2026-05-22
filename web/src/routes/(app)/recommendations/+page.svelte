@@ -9,11 +9,13 @@
 		generateRecommendations,
 		applyRecommendation,
 		dismissRecommendation,
+		snoozeRecommendation,
 		type Recommendation,
 		type RecommendationScope
 	} from '$lib/api/recommendations';
 	import { ApiError } from '$lib/api/client';
 	import { user } from '$lib/stores/user';
+	import { goto } from '$app/navigation';
 
 	let recs = $state<Recommendation[]>([]);
 	let loading = $state(true);
@@ -99,6 +101,47 @@
 		}
 	}
 
+	async function snooze(id: string) {
+		try {
+			await snoozeRecommendation(id, 7);
+			recs = recs.filter((r) => r.id !== id);
+		} catch (e) {
+			error = e instanceof ApiError ? e.message : String(e);
+		}
+	}
+
+	// «Сделать» — открывает страницу, на которой пользователь может реально
+	// разобраться с рекомендацией. Параллельно помечаем её «applied» на бэке,
+	// чтобы в следующий раз не показывать.
+	async function doIt(r: Recommendation) {
+		const target = targetPathFor(r.kind);
+		try {
+			// fire-and-forget — не блокируем переход
+			await applyRecommendation(r.id);
+		} catch {
+			// если не сразу — не страшно, пользователь уже идёт делать
+		}
+		await goto(target);
+	}
+
+	function targetPathFor(kind: string): string {
+		switch (kind) {
+			case 'update_profile':
+			case 'confirm_schedule':
+			case 'check_tz':
+			case 'check_hr_data':
+				return '/profile';
+			case 'move_meeting':
+			case 'change_meeting_window':
+				return '/scheduler';
+			case 'reduce_load':
+			case 'no_new_meetings':
+				return '/workload';
+			default:
+				return '/diagnostics';
+		}
+	}
+
 	function priorityVariant(
 		p: Recommendation['priority']
 	): 'info' | 'warning' | 'danger' | 'neutral' {
@@ -168,38 +211,83 @@
 	<div class="space-y-2">
 		{#each recs as r (r.id)}
 			<Card>
-				<div class="flex items-start gap-3">
-					<div class="flex-1">
-						<div class="flex items-center gap-2 mb-1">
-							<Badge variant={priorityVariant(r.priority)}>{priorityLabel(r.priority)}</Badge>
-							<div class="card__title">{r.title}</div>
-							<Badge variant="neutral">
-								{r.generated_by === 'ai' ? 'AI' : 'rule'}
-							</Badge>
-						</div>
-						{#if r.employee && activeTab !== 'mine'}
-							<div class="text-text-3 text-xs" style="margin-bottom: 6px;">
-								<i class="ti ti-user"></i>
-								<a href="/employees/{r.employee.id}" style="color: inherit;">
-									{r.employee.full_name}
-								</a>
-								{#if r.employee.department} · {r.employee.department}{/if}
-							</div>
-						{/if}
-						<div class="text-text-2 text-sm" style="margin-bottom: 8px;">
-							{r.explanation}
-						</div>
+				<div class="rec">
+					<div class="rec__head">
+						<Badge variant={priorityVariant(r.priority)}>{priorityLabel(r.priority)}</Badge>
+						<div class="card__title">{r.title}</div>
+						<Badge variant={r.generated_by === 'ai' ? 'info' : 'neutral'}>
+							{r.generated_by === 'ai' ? '✨ GigaChat' : 'По шаблону'}
+						</Badge>
 					</div>
-					<div class="flex flex-col gap-1">
-						<Button size="sm" variant="primary" icon="ti-check" onclick={() => apply(r.id)}
-							>Принять</Button
-						>
-						<Button size="sm" variant="ghost" icon="ti-x" onclick={() => dismiss(r.id)}
-							>Отклонить</Button
-						>
+					{#if r.employee && activeTab !== 'mine'}
+						<div class="text-text-3 text-xs" style="margin-bottom: 6px;">
+							<i class="ti ti-user"></i>
+							<a href="/employees/{r.employee.id}" style="color: inherit;">
+								{r.employee.full_name}
+							</a>
+							{#if r.employee.department} · {r.employee.department}{/if}
+						</div>
+					{/if}
+					<div class="text-text-2 text-sm" style="margin-bottom: 12px;">
+						{r.explanation}
+					</div>
+
+					<div class="rec__actions">
+						<Button size="sm" variant="primary" icon="ti-arrow-right" onclick={() => doIt(r)}>
+							Сделать
+						</Button>
+						<Button size="sm" variant="ghost" icon="ti-clock-pause" onclick={() => snooze(r.id)}>
+							Отложить на неделю
+						</Button>
+						<Button size="sm" variant="ghost" icon="ti-x" onclick={() => dismiss(r.id)}>
+							Отклонить
+						</Button>
+					</div>
+
+					<div class="rec__footer">
+						{#if r.generated_by === 'ai'}
+							<i class="ti ti-sparkles"></i>
+							<span>Сгенерировано GigaChat</span>
+						{:else}
+							<i class="ti ti-template"></i>
+							<span>Текст по шаблону</span>
+						{/if}
 					</div>
 				</div>
 			</Card>
 		{/each}
 	</div>
 {/if}
+
+<style>
+	.rec {
+		display: flex;
+		flex-direction: column;
+	}
+	.rec__head {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin-bottom: 6px;
+		flex-wrap: wrap;
+	}
+	.rec__actions {
+		display: flex;
+		gap: 8px;
+		flex-wrap: wrap;
+	}
+	.rec__footer {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin-top: 10px;
+		padding-top: 8px;
+		border-top: 1px dashed var(--border);
+		font-size: 11px;
+		color: var(--text-3);
+	}
+	.rec__footer i {
+		font-size: 13px;
+		color: var(--info-strong);
+	}
+</style>

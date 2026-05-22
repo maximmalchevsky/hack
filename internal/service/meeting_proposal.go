@@ -27,6 +27,7 @@ type MeetingProposalService struct {
 	users         *repository.UserRepo
 	emps          *repository.EmployeeRepo
 	integrations  *repository.IntegrationRepo
+	events        *repository.CalendarEventRepo
 	notifications *NotificationService
 	cipher        *crypto.Cipher
 	yandex        *yandex.Provider // nil если OAuth Яндекса не настроен
@@ -39,6 +40,7 @@ func NewMeetingProposalService(pool *pgxpool.Pool, notif *NotificationService) *
 		users:         repository.NewUserRepo(pool),
 		emps:          repository.NewEmployeeRepo(pool),
 		integrations:  repository.NewIntegrationRepo(pool),
+		events:        repository.NewCalendarEventRepo(pool),
 		notifications: notif,
 	}
 }
@@ -51,12 +53,15 @@ func (s *MeetingProposalService) WithYandex(p *yandex.Provider, cipher *crypto.C
 }
 
 type ProposeMeetingInput struct {
-	TeamID         uuid.UUID
-	StartAt        time.Time
-	EndAt          time.Time
-	Title          string
-	InitiatorUser  uuid.UUID // user_id того, кто запустил предложение
-	InitiatorEmp   uuid.UUID // employee_id (если есть)
+	TeamID        uuid.UUID
+	StartAt       time.Time
+	EndAt         time.Time
+	Title         string
+	InitiatorUser uuid.UUID // user_id того, кто запустил предложение
+	InitiatorEmp  uuid.UUID // employee_id (если есть)
+	// Category — опционально, выбирает пользователь в форме создания встречи.
+	// Пустая = «определить автоматически» (GigaChat при подсчёте «куда уходит время»).
+	Category string
 }
 
 type ProposeMeetingResult struct {
@@ -144,15 +149,19 @@ func (s *MeetingProposalService) Propose(ctx context.Context, in ProposeMeetingI
 		sent++
 	}
 
+	// Категорию валидируем — если пользователь прислал не из списка, обнуляем
+	// (пусть AI решит), чтобы не плодить мусорные значения.
+	category := validateProposalCategory(in.Category)
+
 	// Сохраняем proposal до пуша в Yandex — чтобы было куда привязывать pushes.
 	var meetingID uuid.UUID
 	insErr := s.pool.QueryRow(ctx, `
 		INSERT INTO meeting_proposals (
-			initiator_user, initiator_emp, team_id, title, start_at, end_at
-		) VALUES ($1, $2, $3, $4, $5, $6)
+			initiator_user, initiator_emp, team_id, title, start_at, end_at, category
+		) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''))
 		RETURNING id
 	`, nullableUUID(in.InitiatorUser), nullableUUID(in.InitiatorEmp), nullableUUID(in.TeamID),
-		title, in.StartAt, in.EndAt,
+		title, in.StartAt, in.EndAt, category,
 	).Scan(&meetingID)
 	if insErr != nil {
 		return nil, fmt.Errorf("save proposal: %w", insErr)
@@ -196,7 +205,7 @@ func (s *MeetingProposalService) Propose(ctx context.Context, in ProposeMeetingI
 	// Yandex push — ТОЛЬКО инициатору сразу. Остальные участники получат
 	// событие в свой Яндекс при accept (опционально, по чекбоксу).
 	if in.InitiatorEmp != uuid.Nil {
-		pushed := s.pushYandexForEmployee(ctx, meetingID, in.InitiatorEmp, in, team.Name, initiatorName)
+		pushed := s.pushYandexForEmployee(ctx, meetingID, in.InitiatorEmp, in, team.Name, initiatorName, category)
 		if pushed != nil {
 			res.YandexPushed++
 			res.YandexEventUID = pushed.UID
@@ -220,14 +229,32 @@ func nullableUUID(id uuid.UUID) any {
 	return id
 }
 
+// validateProposalCategory — если пользователь прислал не из канонического
+// списка → возвращает пустую строку. Иначе — приводит к каноничному виду.
+// Пустая строка означает «определить автоматически».
+func validateProposalCategory(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	for _, c := range TimeBreakdownCategories {
+		if strings.EqualFold(s, c) {
+			return c
+		}
+	}
+	return ""
+}
+
 // pushYandexForEmployee — для одного сотрудника: ищет активную Yandex-интеграцию,
 // дешифрует токен, рефрешит если надо, делает CalDAV PUT и сохраняет push
-// в БД для последующей отмены. Возвращает результат CreateEvent или nil.
+// в БД для последующей отмены. Если передана `category` — пишет её в
+// calendar_events (Upsert), чтобы дальше не пере-классифицировать.
+// Возвращает результат CreateEvent или nil.
 func (s *MeetingProposalService) pushYandexForEmployee(
 	ctx context.Context,
 	meetingID, empID uuid.UUID,
 	in ProposeMeetingInput,
-	teamName, initiatorName string,
+	teamName, initiatorName, category string,
 ) *yandex.CreateEventResult {
 	if s.yandex == nil || s.cipher == nil || empID == uuid.Nil {
 		return nil
@@ -297,6 +324,25 @@ func (s *MeetingProposalService) pushYandexForEmployee(
 			source_event_uid, calendar_path
 		) VALUES ($1, $2, $3, $4, $5, $6)
 	`, meetingID, empID, integ.ID, string(integ.Provider), created.UID, created.CalendarPath)
+
+	// Сразу пишем событие в calendar_events с выбранной категорией —
+	// чтобы при следующем sync Upsert не пере-классифицировал её через AI.
+	// Если category пустая — поле остаётся NULL и AI разберётся при подсчёте
+	// «куда уходит время».
+	if s.events != nil {
+		integID := integ.ID
+		_, _ = s.events.Upsert(ctx, repository.UpsertEventInput{
+			EmployeeID:    empID,
+			IntegrationID: &integID,
+			SourceEventID: created.UID,
+			Title:         title,
+			StartAt:       in.StartAt,
+			EndAt:         in.EndAt,
+			Organizer:     integ.AccountEmail,
+			Status:        domain.EventConfirmed,
+			Category:      category,
+		})
+	}
 
 	return created
 }
@@ -1233,19 +1279,20 @@ func (s *MeetingProposalService) Respond(
 
 	// Текущая запись + состояние встречи.
 	var (
-		currStatus    string
-		currYandex    bool
-		mpCancelled   *time.Time
-		mpEnd         time.Time
-		mpStart       time.Time
-		mpTitle       string
-		mpTeamID      *uuid.UUID
-		mpInitiator   *uuid.UUID
+		currStatus  string
+		currYandex  bool
+		mpCancelled *time.Time
+		mpEnd       time.Time
+		mpStart     time.Time
+		mpTitle     string
+		mpTeamID    *uuid.UUID
+		mpInitiator *uuid.UUID
+		mpCategory  *string
 	)
 	err = tx.QueryRow(ctx, `
 		SELECT mr.status::text, mr.yandex_pushed,
 		       mp.cancelled_at, mp.end_at, mp.start_at, mp.title,
-		       mp.team_id, mp.initiator_user
+		       mp.team_id, mp.initiator_user, mp.category
 		FROM meeting_responses mr
 		JOIN meeting_proposals mp ON mp.id = mr.meeting_id
 		WHERE mr.meeting_id = $1 AND mr.employee_id = $2
@@ -1253,7 +1300,7 @@ func (s *MeetingProposalService) Respond(
 	`, meetingID, viewerEmp).Scan(
 		&currStatus, &currYandex,
 		&mpCancelled, &mpEnd, &mpStart, &mpTitle,
-		&mpTeamID, &mpInitiator,
+		&mpTeamID, &mpInitiator, &mpCategory,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -1301,11 +1348,15 @@ func (s *MeetingProposalService) Respond(
 					initiatorName = u.FullName
 				}
 			}
+			cat := ""
+			if mpCategory != nil {
+				cat = *mpCategory
+			}
 			pushed := s.pushYandexForEmployee(ctx, meetingID, viewerEmp, ProposeMeetingInput{
 				Title:   mpTitle,
 				StartAt: mpStart,
 				EndAt:   mpEnd,
-			}, teamName, initiatorName)
+			}, teamName, initiatorName, cat)
 			if pushed != nil {
 				_, _ = s.pool.Exec(ctx, `
 					UPDATE meeting_responses SET yandex_pushed = true

@@ -8,6 +8,7 @@
 		listTeams,
 		findWindow,
 		proposeMeeting,
+		MEETING_CATEGORIES,
 		type Team,
 		type MeetingWindow,
 		type UnavailableReason
@@ -38,6 +39,8 @@
 
 	// Заголовок встречи (общий для всех окон — пользователь может поменять).
 	let meetingTitle = $state('');
+	// Тип встречи — пустая строка значит «определить автоматически» (GigaChat).
+	let meetingCategory = $state('');
 
 	// Мои созданные встречи.
 	let myMeetings = $state<MyMeeting[]>([]);
@@ -290,7 +293,8 @@
 			const r = await proposeMeeting(selectedTeamID, {
 				start_at: w.start_at,
 				end_at: w.end_at,
-				title: meetingTitle.trim() || `Встреча команды «${teamName}»`
+				title: meetingTitle.trim() || `Встреча команды «${teamName}»`,
+				category: meetingCategory || undefined
 			});
 			createdKeys = new Set(createdKeys).add(key);
 			const parts = [`Уведомление отправлено ${r.sent} участникам`];
@@ -499,6 +503,15 @@
 			<div class="field" style="margin-bottom: 0; flex: 1; min-width: 200px;">
 				<label class="field__label" for="title">Название встречи</label>
 				<input id="title" type="text" bind:value={meetingTitle} placeholder="Например: Демо для команды" />
+			</div>
+			<div class="field" style="margin-bottom: 0; min-width: 200px;">
+				<label class="field__label" for="cat">Тип встречи</label>
+				<select id="cat" bind:value={meetingCategory} style="width: 200px;">
+					<option value="">Определить автоматически</option>
+					{#each MEETING_CATEGORIES as c (c)}
+						<option value={c}>{c}</option>
+					{/each}
+				</select>
 			</div>
 			<Button variant="primary" icon="ti-search" onclick={search} disabled={searching}>
 				{searching ? 'Ищем…' : 'Найти окна'}

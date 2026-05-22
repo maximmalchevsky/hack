@@ -78,6 +78,79 @@
 			saving = false;
 		}
 	}
+
+	// --- Фильтры ---
+
+	// Группировка kinds: одна «галка» в UI = несколько kind'ов в БД.
+	const KIND_GROUPS: { value: string; label: string; icon: string; kinds: string[] }[] = [
+		{
+			value: 'meetings',
+			label: 'Встречи и приглашения',
+			icon: 'ti-calendar-event',
+			kinds: [
+				'meeting_proposal',
+				'meeting_response',
+				'meeting_updated',
+				'meeting_cancelled'
+			]
+		},
+		{ value: 'reminders', label: 'Напоминания', icon: 'ti-bell', kinds: ['event_reminder', 'meeting_reminder'] },
+		{ value: 'recos', label: 'Рекомендации ИИ', icon: 'ti-sparkles', kinds: ['recommendation'] },
+		{ value: 'digest', label: 'Дайджест недели', icon: 'ti-mail', kinds: ['team_digest', 'weekly_summary'] },
+		{ value: 'system', label: 'Системные', icon: 'ti-settings', kinds: ['system', 'stale_profile', 'pulse_check_due'] }
+	];
+
+	const PRIORITIES: { value: 'low' | 'medium' | 'high'; label: string }[] = [
+		{ value: 'low', label: 'Все' },
+		{ value: 'medium', label: 'Средний и выше' },
+		{ value: 'high', label: 'Только высокий' }
+	];
+
+	// Когда юзер тыкает на группу — добавляем/удаляем ВСЕ её kinds сразу.
+	async function toggleKind(group: string) {
+		if (!prefs) return;
+		const g = KIND_GROUPS.find((x) => x.value === group);
+		if (!g) return;
+
+		const set = new Set(prefs.notify_kinds);
+		const isOn = g.kinds.every((k) => set.has(k));
+		if (isOn) {
+			g.kinds.forEach((k) => set.delete(k));
+		} else {
+			g.kinds.forEach((k) => set.add(k));
+		}
+		const next = Array.from(set);
+
+		saving = true;
+		try {
+			prefs = await updateNotificationPrefs({ notify_kinds: next });
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			saving = false;
+		}
+	}
+
+	// «Группа включена» = есть хотя бы один её kind в notify_kinds.
+	// Если notify_kinds пуст — считаем что все группы выключены (но шлются ВСЕ типы как fallback).
+	function isKindGroupOn(
+		p: NotificationPrefs,
+		g: { kinds: string[] }
+	): boolean {
+		return g.kinds.some((k) => p.notify_kinds.includes(k));
+	}
+
+	async function setPriority(p: 'low' | 'medium' | 'high') {
+		if (!prefs) return;
+		saving = true;
+		try {
+			prefs = await updateNotificationPrefs({ notify_min_priority: p });
+		} catch (e) {
+			error = e instanceof Error ? e.message : String(e);
+		} finally {
+			saving = false;
+		}
+	}
 </script>
 
 <Card
@@ -168,6 +241,48 @@
 				</button>
 			</div>
 		{/if}
+
+		<!-- Фильтры: типы + приоритет -->
+		<div class="filters">
+			<div class="filters__title">Типы уведомлений</div>
+			<div class="filters__hint">
+				Если ничего не отмечено — приходят все типы. Иначе только выбранные.
+			</div>
+			<div class="filters__kinds">
+				{#each KIND_GROUPS as g (g.value)}
+					<label class="kind-pill" class:kind-pill--active={isKindGroupOn(prefs, g)}>
+						<input
+							type="checkbox"
+							checked={isKindGroupOn(prefs, g)}
+							onchange={() => toggleKind(g.value)}
+							disabled={saving}
+						/>
+						<i class="ti {g.icon}"></i>
+						<span>{g.label}</span>
+					</label>
+				{/each}
+			</div>
+
+			<div class="filters__title" style="margin-top: 16px;">Минимальный приоритет</div>
+			<div class="filters__hint">
+				Не отправлять уведомления ниже выбранного уровня важности.
+			</div>
+			<div class="filters__priorities">
+				{#each PRIORITIES as p (p.value)}
+					<label class="prio-pill" class:prio-pill--active={prefs.notify_min_priority === p.value}>
+						<input
+							type="radio"
+							name="prio"
+							value={p.value}
+							checked={prefs.notify_min_priority === p.value}
+							onchange={() => setPriority(p.value)}
+							disabled={saving}
+						/>
+						<span>{p.label}</span>
+					</label>
+				{/each}
+			</div>
+		</div>
 	{/if}
 </Card>
 
@@ -319,5 +434,63 @@
 	}
 	.hint-refresh:hover {
 		background: var(--surface);
+	}
+
+	.filters {
+		margin-top: 18px;
+		padding-top: 14px;
+		border-top: 1px dashed var(--border);
+	}
+	.filters__title {
+		font-size: 12px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.4px;
+		color: var(--text-2);
+	}
+	.filters__hint {
+		font-size: 11px;
+		color: var(--text-3);
+		margin-top: 4px;
+		margin-bottom: 10px;
+	}
+	.filters__kinds,
+	.filters__priorities {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+	.kind-pill,
+	.prio-pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 12px;
+		background: var(--surface);
+		border: 1px solid var(--border);
+		border-radius: 20px;
+		font-size: 12px;
+		color: var(--text-2);
+		cursor: pointer;
+		transition: all 0.12s;
+		user-select: none;
+	}
+	.kind-pill:hover,
+	.prio-pill:hover {
+		border-color: var(--info-strong);
+	}
+	.kind-pill input,
+	.prio-pill input {
+		display: none;
+	}
+	.kind-pill--active,
+	.prio-pill--active {
+		background: var(--info-bg);
+		border-color: var(--info-strong);
+		color: var(--info-strong);
+		font-weight: 600;
+	}
+	.kind-pill i {
+		font-size: 14px;
 	}
 </style>

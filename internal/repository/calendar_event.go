@@ -35,6 +35,11 @@ type UpsertEventInput struct {
 	Organizer      string
 	AttendeesCount int
 	Status         domain.EventStatus
+	// Category — опционально. Если задано — пишем; иначе на UPDATE НЕ затираем
+	// существующее значение (через COALESCE в SQL). Сценарий: первый insert
+	// идёт из sync без category, потом пользователь / GigaChat проставил —
+	// следующий sync не должен это сбить.
+	Category string
 }
 
 // Upsert — INSERT…ON CONFLICT по (integration_id, source_event_id).
@@ -50,10 +55,10 @@ func (r *CalendarEventRepo) Upsert(ctx context.Context, in UpsertEventInput) (*d
 		INSERT INTO calendar_events
 			(employee_id, integration_id, source_event_id, title, description,
 			 start_at, end_at, timezone, is_recurring, rrule, organizer,
-			 attendees_count, status, fetched_at)
+			 attendees_count, status, category, fetched_at)
 		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''),
 		        $6, $7, NULLIF($8, ''), $9, NULLIF($10, ''), NULLIF($11, ''),
-		        $12, $13, now())
+		        $12, $13, NULLIF($14, ''), now())
 		ON CONFLICT (integration_id, source_event_id) WHERE integration_id IS NOT NULL
 		DO UPDATE SET
 			title = EXCLUDED.title,
@@ -66,17 +71,19 @@ func (r *CalendarEventRepo) Upsert(ctx context.Context, in UpsertEventInput) (*d
 			organizer = EXCLUDED.organizer,
 			attendees_count = EXCLUDED.attendees_count,
 			status = EXCLUDED.status,
+			-- Не затираем существующую категорию, если в новом upsert она пустая.
+			category = COALESCE(EXCLUDED.category, calendar_events.category),
 			fetched_at = now()
 		RETURNING id, employee_id, integration_id, source_event_id,
 		          COALESCE(title, ''), COALESCE(description, ''),
 		          start_at, end_at, COALESCE(timezone, ''),
 		          is_recurring, COALESCE(rrule, ''), recurrence_root_id,
 		          COALESCE(attendees_count, 0), COALESCE(organizer, ''),
-		          status, is_excluded, fetched_at
+		          status, is_excluded, category, fetched_at
 	`,
 		in.EmployeeID, in.IntegrationID, in.SourceEventID, in.Title, in.Description,
 		in.StartAt.UTC(), in.EndAt.UTC(), in.Timezone, in.IsRecurring, in.RRule,
-		in.Organizer, in.AttendeesCount, string(in.Status))
+		in.Organizer, in.AttendeesCount, string(in.Status), in.Category)
 
 	return scanCalendarEvent(row)
 }
@@ -128,6 +135,28 @@ func (r *CalendarEventRepo) Exclude(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// SetCategory — меняет категорию встречи. Проверяет, что событие принадлежит
+// сотруднику (защита от чужих апдейтов). Пустая строка — сбрасывает в NULL,
+// чтобы при следующем подсчёте GigaChat мог пере-классифицировать.
+func (r *CalendarEventRepo) SetCategory(
+	ctx context.Context,
+	eventID, employeeID uuid.UUID,
+	category string,
+) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE calendar_events
+		SET category = NULLIF($1, '')
+		WHERE id = $2 AND employee_id = $3
+	`, category, eventID, employeeID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *CalendarEventRepo) Count(ctx context.Context, employeeID uuid.UUID, from, to time.Time) (int, error) {
 	var n int
 	err := r.pool.QueryRow(ctx, `
@@ -152,7 +181,7 @@ const calendarEventCols = `
 	       start_at, end_at, COALESCE(timezone, ''),
 	       is_recurring, COALESCE(rrule, ''), recurrence_root_id,
 	       COALESCE(attendees_count, 0), COALESCE(organizer, ''),
-	       status, is_excluded, fetched_at
+	       status, is_excluded, category, fetched_at
 `
 
 func scanCalendarEvent(s rowScanner) (*domain.CalendarEvent, error) {
@@ -164,7 +193,7 @@ func scanCalendarEvent(s rowScanner) (*domain.CalendarEvent, error) {
 		&e.ID, &e.EmployeeID, &e.IntegrationID, &e.SourceEventID,
 		&e.Title, &e.Description, &e.StartAt, &e.EndAt, &e.Timezone,
 		&e.IsRecurring, &e.RRule, &e.RecurrenceRootID,
-		&e.AttendeesCount, &e.Organizer, &status, &e.IsExcluded, &e.FetchedAt,
+		&e.AttendeesCount, &e.Organizer, &status, &e.IsExcluded, &e.Category, &e.FetchedAt,
 	); err != nil {
 		return nil, err
 	}

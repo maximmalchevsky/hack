@@ -12,9 +12,11 @@
 	import {
 		listMyEvents,
 		getWeeklySummary,
+		setEventCategory,
 		type CalendarEvent,
 		type WeeklySummary
 	} from '$lib/api/profile';
+	import { MEETING_CATEGORIES } from '$lib/api/teams';
 	import { ApiError } from '$lib/api/client';
 	import { marked } from 'marked';
 
@@ -165,6 +167,7 @@
 		description?: string;
 		status: string;
 		timezone?: string;
+		category?: string;
 	}
 
 	interface DayAgenda {
@@ -212,7 +215,8 @@
 				durationMin: Math.round(durMs / 60000),
 				description: ev.description,
 				status: ev.status,
-				timezone: ev.timezone
+				timezone: ev.timezone,
+				category: ev.category
 			});
 		}
 
@@ -305,6 +309,24 @@
 
 	function toggleExpanded(id: string) {
 		expandedID = expandedID === id ? null : id;
+	}
+
+	// --- Inline-редактирование категории встречи ---
+	let categorySaving = $state<string | null>(null);
+
+	async function onCategoryChange(eventID: string, category: string) {
+		categorySaving = eventID;
+		try {
+			await setEventCategory(eventID, category);
+			// Локально обновим список — без полного перезапроса.
+			events = events.map((ev) =>
+				ev.id === eventID ? { ...ev, category: category || undefined } : ev
+			);
+		} catch (e) {
+			error = e instanceof ApiError ? e.message : String(e);
+		} finally {
+			categorySaving = null;
+		}
 	}
 
 	// --- Stat-карточки ---
@@ -556,6 +578,25 @@
 												<dt>Описание</dt>
 												<dd class="ev-full__desc">{e.description}</dd>
 											{/if}
+
+											<dt>Тип встречи</dt>
+											<dd class="ev-full__cat">
+												<select
+													value={e.category ?? ''}
+													onchange={(ev) => onCategoryChange(e.id, (ev.currentTarget as HTMLSelectElement).value)}
+													disabled={categorySaving === e.id}
+												>
+													<option value="">— определить автоматически —</option>
+													{#each MEETING_CATEGORIES as c (c)}
+														<option value={c}>{c}</option>
+													{/each}
+												</select>
+												{#if categorySaving === e.id}
+													<span class="text-text-3 text-xs">сохраняем…</span>
+												{:else if !e.category}
+													<span class="text-text-3 text-xs">пока решает AI</span>
+												{/if}
+											</dd>
 										</dl>
 									</div>
 								{/if}

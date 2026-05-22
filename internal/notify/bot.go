@@ -24,10 +24,17 @@ import (
 // Используем user_id как payload deeplink'а — это нормально для хакатона.
 // В проде надо одноразовые подписанные токены, чтобы payload нельзя было
 // подменить и привязать чужого юзера.
+// PulseSubmitter — минимальный интерфейс для записи pulse-ответа из бота.
+// Возврат игнорируется, важна только ошибка.
+type PulseSubmitter interface {
+	SubmitFromBot(ctx context.Context, empID uuid.UUID, score int) error
+}
+
 type Bot struct {
-	pool *pgxpool.Pool
-	log  zerolog.Logger
-	bot  *tele.Bot
+	pool  *pgxpool.Pool
+	log   zerolog.Logger
+	bot   *tele.Bot
+	pulse PulseSubmitter
 }
 
 // NewBot создаёт бота. Возвращает (nil, nil) если token пустой — это значит
@@ -53,10 +60,26 @@ func NewBot(token string, pool *pgxpool.Pool, log zerolog.Logger) (*Bot, error) 
 	b.Handle("/start", bot.onStart)
 	b.Handle("/stop", bot.onStop)
 	b.Handle("/help", bot.onHelp)
+	b.Handle("/today", bot.onToday)
+	b.Handle("/tomorrow", bot.onTomorrow)
+	b.Handle("/pulse", bot.onPulse)
+	b.Handle("/team", bot.onTeam)
+	// Кнопки Pulse — callback'и (inline-keyboard).
+	b.Handle(tele.OnCallback, bot.onCallback)
 	// Любое другое сообщение — мягкий help.
 	b.Handle(tele.OnText, bot.onText)
 
 	return bot, nil
+}
+
+// WithPulse — DI, чтобы бот мог сохранять ответы на /pulse.
+// Передаётся обёртка над *service.PulseService.
+func (b *Bot) WithPulse(p PulseSubmitter) *Bot {
+	if b == nil {
+		return b
+	}
+	b.pulse = p
+	return b
 }
 
 // Run — запускает long-polling. Блокирующий вызов. Кладите в горутину.
@@ -141,7 +164,10 @@ func (b *Bot) onHelp(c tele.Context) error {
 	return c.Send(
 		"Workie · бот уведомлений.\n\n" +
 			"Команды:\n" +
-			"• /start <id> — привязка к аккаунту (открой из профиля)\n" +
+			"• /today — встречи на сегодня\n" +
+			"• /tomorrow — встречи на завтра\n" +
+			"• /pulse — ответить на 2-недельный опрос\n" +
+			"• /team — сводка команды (для руководителя)\n" +
 			"• /stop — отключить уведомления\n" +
 			"• /help — это сообщение",
 	)

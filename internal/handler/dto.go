@@ -275,9 +275,14 @@ type CalendarEventDTO struct {
 	Organizer      string    `json:"organizer,omitempty"`
 	Status         string    `json:"status"`
 	IsExcluded     bool      `json:"is_excluded,omitempty"`
+	Category       string    `json:"category,omitempty"`
 }
 
 func EventToDTO(e domain.CalendarEvent) CalendarEventDTO {
+	cat := ""
+	if e.Category != nil {
+		cat = *e.Category
+	}
 	return CalendarEventDTO{
 		ID:             e.ID,
 		Title:          e.Title,
@@ -289,6 +294,7 @@ func EventToDTO(e domain.CalendarEvent) CalendarEventDTO {
 		Organizer:      e.Organizer,
 		Status:         string(e.Status),
 		IsExcluded:     e.IsExcluded,
+		Category:       cat,
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
@@ -30,6 +31,7 @@ func (h *RecommendationHandler) Mount(r fiber.Router) {
 	g.Post("/generate", h.generate)
 	g.Post("/:id/apply", h.apply)
 	g.Post("/:id/dismiss", h.dismiss)
+	g.Post("/:id/snooze", h.snooze)
 }
 
 func (h *RecommendationHandler) list(c fiber.Ctx) error {
@@ -131,6 +133,26 @@ func (h *RecommendationHandler) apply(c fiber.Ctx) error {
 
 func (h *RecommendationHandler) dismiss(c fiber.Ctx) error {
 	return h.setStatus(c, false)
+}
+
+func (h *RecommendationHandler) snooze(c fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid id")
+	}
+	days := 7
+	if q := c.Query("days"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil && n > 0 && n <= 90 {
+			days = n
+		}
+	}
+	if err := h.svc.Snooze(c.Context(), id, days); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return fiber.NewError(fiber.StatusNotFound, "recommendation not found")
+		}
+		return err
+	}
+	return c.Status(fiber.StatusNoContent).Send(nil)
 }
 
 func (h *RecommendationHandler) setStatus(c fiber.Ctx, apply bool) error {

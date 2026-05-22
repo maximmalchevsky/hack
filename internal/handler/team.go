@@ -22,9 +22,10 @@ func NewTeamHandler(svc *service.TeamService, proposal *service.MeetingProposalS
 }
 
 type ProposeMeetingRequest struct {
-	StartAt time.Time `json:"start_at"`
-	EndAt   time.Time `json:"end_at"`
-	Title   string    `json:"title,omitempty"`
+	StartAt  time.Time `json:"start_at"`
+	EndAt    time.Time `json:"end_at"`
+	Title    string    `json:"title,omitempty"`
+	Category string    `json:"category,omitempty"` // пусто = «определить автоматически»
 }
 
 func (h *TeamHandler) proposeMeeting(c fiber.Ctx) error {
@@ -44,6 +45,7 @@ func (h *TeamHandler) proposeMeeting(c fiber.Ctx) error {
 		StartAt:       req.StartAt,
 		EndAt:         req.EndAt,
 		Title:         req.Title,
+		Category:      req.Category,
 		InitiatorUser: middleware.UserID(c),
 		InitiatorEmp:  middleware.EmployeeID(c),
 	})
@@ -262,7 +264,9 @@ func (h *TeamHandler) findWindow(c fiber.Ctx) error {
 }
 
 func (h *TeamHandler) list(c fiber.Ctx) error {
-	list, err := h.svc.List(c.Context())
+	role := string(middleware.CurrentRole(c))
+	empID := middleware.EmployeeID(c)
+	list, err := h.svc.ListVisible(c.Context(), role, empID)
 	if err != nil {
 		return err
 	}
