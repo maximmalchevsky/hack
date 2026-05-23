@@ -96,22 +96,30 @@ func (p *Provider) FetchTasks(ctx context.Context, token *integrations.Token, as
 	// Берём оба варианта объединением: всё что мне назначено и не Done,
 	// плюс задачи с дедлайном в горизонте планирования. Без duedate
 	// в Jira куча задач, и они тоже нужны планировщику.
+	//
+	// Используем POST /rest/api/3/search/jql — старый /search Atlassian
+	// депрекейтнул в 2024, окончательно отключил 1 мая 2025 (HTTP 410 Gone).
 	jql := fmt.Sprintf(
 		`assignee = "%s" AND (statusCategory != Done OR (duedate >= "%s" AND duedate <= "%s")) ORDER BY priority DESC, duedate ASC`,
 		assignee,
 		from.Format("2006-01-02"),
 		to.Format("2006-01-02"),
 	)
-	// fields= ограничивает payload, чтобы не качать всё — только нужные нам.
-	fields := "summary,description,status,priority,issuetype,duedate,timeoriginalestimate,timespent"
-	u := strings.TrimRight(payload.BaseURL, "/") +
-		"/rest/api/3/search?jql=" + url.QueryEscape(jql) +
-		"&fields=" + url.QueryEscape(fields) +
-		"&maxResults=100"
+	body := map[string]any{
+		"jql": jql,
+		"fields": []string{
+			"summary", "description", "status", "priority",
+			"issuetype", "duedate", "timeoriginalestimate", "timespent",
+		},
+		"maxResults": 100,
+	}
+	bodyJSON, _ := json.Marshal(body)
+	u := strings.TrimRight(payload.BaseURL, "/") + "/rest/api/3/search/jql"
 
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(string(bodyJSON)))
 	req.SetBasicAuth(payload.Email, payload.APIToken)
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
@@ -119,7 +127,8 @@ func (p *Provider) FetchTasks(ctx context.Context, token *integrations.Token, as
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("jira: search status %d", resp.StatusCode)
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("jira: search status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 
 	var out struct {
