@@ -188,14 +188,55 @@
 	}
 
 	function providerLabel(p: Integration['provider']): string {
-		return {
-			ical: 'iCal / ICS',
-			caldav: 'CalDAV',
-			google_calendar: 'Google Calendar',
-			ms365: 'Microsoft 365',
-			jira: 'Jira',
-			yandex_tracker: 'Yandex Tracker'
-		}[p];
+		return (
+			{
+				ical: 'iCal / ICS',
+				caldav: 'CalDAV',
+				google_calendar: 'Google Calendar',
+				ms365: 'Microsoft 365',
+				jira: 'Jira',
+				yandex_tracker: 'Яндекс Трекер',
+				yandex_calendar: 'Яндекс Календарь'
+			}[p] ?? p
+		);
+	}
+
+	// providerBadgeColor — цветной маркер типа источника. Видно с первого
+	// взгляда: это Яндекс / Jira / iCal и т.д.
+	function providerBadgeColor(p: Integration['provider']): string {
+		switch (p) {
+			case 'yandex_calendar':
+			case 'yandex_tracker':
+				return '#fc3f1d'; // Яндекс red
+			case 'jira':
+				return '#0052cc'; // Atlassian blue
+			case 'google_calendar':
+				return '#1a73e8';
+			case 'ms365':
+				return '#0078d4';
+			case 'caldav':
+				return '#14b8a6';
+			case 'ical':
+				return '#6366f1';
+			default:
+				return '#94a3b8';
+		}
+	}
+
+	function providerIcon(p: Integration['provider']): string {
+		switch (p) {
+			case 'yandex_calendar':
+			case 'google_calendar':
+			case 'ms365':
+			case 'caldav':
+			case 'ical':
+				return 'ti-calendar';
+			case 'jira':
+			case 'yandex_tracker':
+				return 'ti-checkbox';
+			default:
+				return 'ti-plug';
+		}
 	}
 </script>
 
@@ -361,17 +402,30 @@
 					class="flex items-center gap-3 p-3"
 					style="border: 0.5px solid var(--border); border-radius: var(--radius-md);"
 				>
-					<div class="header__logo-icon" style="background: var(--surface-2); color: var(--text-2);">
-						<i class="ti ti-plug"></i>
+					<div
+						class="header__logo-icon"
+						style="background: {providerBadgeColor(i.provider)}; color: #fff;"
+					>
+						<i class="ti {providerIcon(i.provider)}"></i>
 					</div>
 					<div class="flex-1">
-						<div class="flex items-center gap-2">
+						<div class="flex items-center gap-2" style="flex-wrap: wrap;">
 							<div class="card__title">{providerLabel(i.provider)}</div>
+							<span
+								class="provider-tag"
+								style="border-color: {providerBadgeColor(i.provider)}; color: {providerBadgeColor(i.provider)};"
+							>
+								{i.provider}
+							</span>
 							<Badge variant={statusVariant(i.status)}>{i.status}</Badge>
 						</div>
 						<div class="text-text-3 text-xs">
-							{#if i.account_label}{i.account_label}{:else if i.account_email}{i.account_email}{:else}—{/if}
-							· последний sync: {fmtDate(i.last_sync_at)}
+							{#if i.account_label && i.account_label !== providerLabel(i.provider)}
+								{i.account_label} ·
+							{:else if i.account_email}
+								{i.account_email} ·
+							{/if}
+							последний sync: {fmtDate(i.last_sync_at)}
 						</div>
 						{#if i.last_error}
 							<div class="text-text-2 text-xs" style="color: var(--danger-strong);">
@@ -390,6 +444,20 @@
 </Card>
 
 <style>
+	.provider-tag {
+		display: inline-flex;
+		align-items: center;
+		padding: 1px 8px;
+		font-size: 10px;
+		font-weight: 600;
+		font-family: 'JetBrains Mono', monospace;
+		text-transform: uppercase;
+		letter-spacing: 0.4px;
+		border: 1px solid;
+		border-radius: 4px;
+		background: transparent;
+	}
+
 	.yandex-block {
 		display: flex;
 		align-items: center;

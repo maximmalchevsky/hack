@@ -123,21 +123,30 @@
 		return SOURCE_COLORS[idx % SOURCE_COLORS.length];
 	}
 
-	// Список «источников» для UI: native + все integrations пользователя.
-	// native = «Календарь Workie» — события созданные внутри системы
-	// (через /scheduler или насеянные при первом запуске).
+	// Список «источников» для UI: native + только календарные integrations.
+	// Tracker-провайдеры (Jira, Yandex Tracker) исключаем — их задачи живут
+	// в /tasks, а не в недельной агенде.
+	const CALENDAR_PROVIDERS = new Set([
+		'yandex_calendar',
+		'google_calendar',
+		'ms365',
+		'caldav',
+		'ical'
+	]);
 	const sources = $derived.by(() => {
 		const out: { key: string; label: string; color: string; integ: Integration | null }[] = [
 			{ key: 'native', label: 'Календарь Workie', color: sourceColor('native', 0), integ: null }
 		];
-		integrations.forEach((i, idx) => {
-			out.push({
-				key: i.id,
-				label: sourceLabel(i),
-				color: sourceColor(i.id, idx),
-				integ: i
+		integrations
+			.filter((i) => CALENDAR_PROVIDERS.has(i.provider))
+			.forEach((i, idx) => {
+				out.push({
+					key: i.id,
+					label: sourceLabel(i),
+					color: sourceColor(i.id, idx),
+					integ: i
+				});
 			});
-		});
 		return out;
 	});
 
@@ -191,24 +200,16 @@
 		}
 	}
 
-	function todayKey(): string {
-		const d = new Date();
-		const y = d.getFullYear();
-		const m = String(d.getMonth() + 1).padStart(2, '0');
-		const dd = String(d.getDate()).padStart(2, '0');
-		return `${y}-${m}-${dd}`;
-	}
 
-	// Топ-3 задачи на сегодня по приоритету (только те, у которых сегодня есть слот).
-	const tasksToday = $derived.by(() => {
-		const key = todayKey();
+	// Хелпер: задачи с слотами на конкретный день, отсортированные по приоритету.
+	function tasksForDate(date: Date): { task: TrackerTask; hours: number }[] {
+		const key = dateToKey(date);
 		const list = plannedTasks
 			.map((t) => {
 				const slot = t.slots?.find((s) => s.date === key);
 				return slot ? { task: t, hours: slot.hours } : null;
 			})
 			.filter((x): x is { task: TrackerTask; hours: number } => x !== null);
-		// сортируем по priority desc
 		const rank: Record<string, number> = {
 			highest: 5,
 			high: 4,
@@ -216,8 +217,25 @@
 			low: 2,
 			lowest: 1
 		};
-		list.sort((a, b) => (rank[b.task.priority ?? 'medium'] ?? 3) - (rank[a.task.priority ?? 'medium'] ?? 3));
-		return list.slice(0, 3);
+		list.sort(
+			(a, b) =>
+				(rank[b.task.priority ?? 'medium'] ?? 3) -
+				(rank[a.task.priority ?? 'medium'] ?? 3)
+		);
+		return list;
+	}
+
+	function dateToKey(d: Date): string {
+		const y = d.getFullYear();
+		const m = String(d.getMonth() + 1).padStart(2, '0');
+		const dd = String(d.getDate()).padStart(2, '0');
+		return `${y}-${m}-${dd}`;
+	}
+
+	// Топ-3 задачи на СЕГОДНЯ — для виджета над недельной агендой.
+	const tasksToday = $derived.by(() => {
+		const today = new Date();
+		return tasksForDate(today).slice(0, 3);
 	});
 
 	const hoursToday = $derived(
@@ -688,6 +706,8 @@
 		<!-- Полный день. -->
 		{#if days[selectedDayIdx]}
 			{@const sel = days[selectedDayIdx]}
+			{@const selTasks = tasksForDate(sel.date)}
+			{@const selTaskHours = selTasks.reduce((s, x) => s + x.hours, 0)}
 			<Card>
 				<div class="day-head">
 					<div>
@@ -702,12 +722,39 @@
 								: sel.events.length >= 2 && sel.events.length <= 4
 									? 'события'
 									: 'событий'}
+							{#if selTasks.length > 0}
+								· план задач: {selTaskHours.toFixed(1)} ч
+							{/if}
 						</div>
 					</div>
 				</div>
 
+				{#if selTasks.length > 0}
+					<div class="day-tasks">
+						<div class="day-tasks__head">
+							<i class="ti ti-checkbox"></i>
+							Запланировано из Jira ({selTaskHours.toFixed(1)} ч)
+						</div>
+						<div class="day-tasks__list">
+							{#each selTasks as { task, hours } (task.id)}
+								<a class="day-task" href="/tasks">
+									<span
+										class="day-task__dot"
+										style="background:{priorityColorTask(task.priority)}"
+									></span>
+									<span class="day-task__key">{task.source_task_id}</span>
+									<span class="day-task__title">{task.title}</span>
+									<span class="day-task__hours">{hours} ч</span>
+								</a>
+							{/each}
+						</div>
+					</div>
+				{/if}
+
 				{#if sel.events.length === 0}
-					<div class="day-empty">Нет событий</div>
+					{#if selTasks.length === 0}
+						<div class="day-empty">Нет событий</div>
+					{/if}
 				{:else}
 					<div class="day-events">
 						{#each sel.events as e (e.id)}
@@ -824,6 +871,74 @@
 </div>
 
 <style>
+	/* --- Блок задач внутри карточки дня --- */
+	.day-tasks {
+		margin: 12px 0;
+		padding: 10px 12px;
+		background: var(--surface);
+		border: 0.5px solid var(--border);
+		border-radius: var(--radius-md);
+	}
+	.day-tasks__head {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 11px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.4px;
+		color: var(--text-3);
+		margin-bottom: 6px;
+	}
+	.day-tasks__list {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+	.day-task {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 6px 8px;
+		border-radius: 6px;
+		text-decoration: none;
+		color: inherit;
+		transition: background 0.12s;
+	}
+	.day-task:hover {
+		background: var(--surface-2);
+	}
+	.day-task__dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+	.day-task__key {
+		font-family: 'JetBrains Mono', monospace;
+		font-size: 11px;
+		color: var(--text-3);
+		padding: 1px 6px;
+		background: var(--bg);
+		border-radius: 4px;
+		flex-shrink: 0;
+	}
+	.day-task__title {
+		flex: 1;
+		font-size: 13px;
+		color: var(--text);
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.day-task__hours {
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--text-2);
+		flex-shrink: 0;
+	}
+
 	/* --- Запланировано сегодня --- */
 	.today-tasks {
 		display: flex;
