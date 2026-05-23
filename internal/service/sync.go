@@ -14,6 +14,7 @@ import (
 	"worktimesync/internal/integrations"
 	"worktimesync/internal/integrations/caldav"
 	"worktimesync/internal/integrations/ical"
+	"worktimesync/internal/integrations/jira"
 	"worktimesync/internal/integrations/yandex"
 	"worktimesync/internal/repository"
 	"worktimesync/pkg/crypto"
@@ -24,6 +25,7 @@ type SyncService struct {
 	pool         *pgxpool.Pool
 	integrations *repository.IntegrationRepo
 	events       *repository.CalendarEventRepo
+	tasks        *repository.TrackerTaskRepo
 	cipher       *crypto.Cipher
 	yandex       *yandex.Provider // nil если OAuth Яндекса не настроен
 }
@@ -33,6 +35,7 @@ func NewSyncService(pool *pgxpool.Pool, cipher *crypto.Cipher) *SyncService {
 		pool:         pool,
 		integrations: repository.NewIntegrationRepo(pool),
 		events:       repository.NewCalendarEventRepo(pool),
+		tasks:        repository.NewTrackerTaskRepo(pool),
 		cipher:       cipher,
 	}
 }
@@ -49,12 +52,21 @@ type SyncResult struct {
 	EmployeeID    uuid.UUID
 	Provider      domain.IntegrationProvider
 	EventsLoaded  int
+	TasksLoaded   int
 	From          time.Time
 	To            time.Time
 }
 
-// SyncIntegration — загружает события за окно [-30d..+60d] и пишет в БД.
-// При ошибке статус интеграции переводится в error.
+// isTrackerProvider — отвечает ли интеграция за задачи (Jira, Yandex Tracker),
+// или это календарный источник. Tracker-интеграции пишут в tracker_tasks,
+// календарные — в calendar_events.
+func isTrackerProvider(p domain.IntegrationProvider) bool {
+	return p == domain.IntegrationJira || p == domain.IntegrationYandexTracker
+}
+
+// SyncIntegration — загружает события (для календаря) или задачи (для tracker'а)
+// за окно [-30d..+60d] и пишет в БД. При ошибке статус интеграции переводится
+// в error.
 func (s *SyncService) SyncIntegration(ctx context.Context, integrationID uuid.UUID) (*SyncResult, error) {
 	integ, err := s.integrations.ByID(ctx, integrationID)
 	if err != nil {
@@ -63,6 +75,10 @@ func (s *SyncService) SyncIntegration(ctx context.Context, integrationID uuid.UU
 
 	from := time.Now().UTC().AddDate(0, 0, -30)
 	to := time.Now().UTC().AddDate(0, 0, 60)
+
+	if isTrackerProvider(integ.Provider) {
+		return s.syncTasks(ctx, integ, from, to)
+	}
 
 	events, err := s.fetchEvents(ctx, integ, from, to)
 	if err != nil {
@@ -216,6 +232,88 @@ func (s *SyncService) fetchCalDAV(ctx context.Context, integ *domain.Integration
 		},
 	}
 	return prov.FetchEvents(ctx, tok, from, to)
+}
+
+// syncTasks — путь для tracker-интеграций (Jira, Yandex Tracker). Тянет задачи
+// провайдера за окно [from, to] и пишет в tracker_tasks. Зеркало SyncIntegration
+// для календарных источников.
+func (s *SyncService) syncTasks(ctx context.Context, integ *domain.Integration, from, to time.Time) (*SyncResult, error) {
+	tasks, err := s.fetchTasks(ctx, integ, from, to)
+	if err != nil {
+		_ = s.integrations.MarkSyncError(ctx, integ.ID, err.Error())
+		return nil, err
+	}
+
+	loaded := 0
+	for _, t := range tasks {
+		integID := integ.ID
+		_, upErr := s.tasks.Upsert(ctx, repository.UpsertTaskInput{
+			EmployeeID:     integ.EmployeeID,
+			IntegrationID:  &integID,
+			SourceTaskID:   t.SourceID,
+			Title:          t.Title,
+			Description:    t.Description,
+			Status:         t.Status,
+			Priority:       domain.NormalizeTaskPriority(t.Priority),
+			Type:           t.Type,
+			DueAt:          t.DueAt,
+			EstimatedHours: t.EstimatedHours,
+			ActualHours:    t.ActualHours,
+			Raw:            t.Raw,
+		})
+		if upErr != nil {
+			continue
+		}
+		loaded++
+	}
+
+	if err := s.integrations.MarkSyncSuccess(ctx, integ.ID); err != nil {
+		return nil, err
+	}
+	return &SyncResult{
+		IntegrationID: integ.ID,
+		EmployeeID:    integ.EmployeeID,
+		Provider:      integ.Provider,
+		TasksLoaded:   loaded,
+		From:          from,
+		To:            to,
+	}, nil
+}
+
+// fetchTasks — switch по provider'у, аналог fetchEvents для tracker'ов.
+func (s *SyncService) fetchTasks(ctx context.Context, integ *domain.Integration, from, to time.Time) ([]integrations.Task, error) {
+	switch integ.Provider {
+	case domain.IntegrationJira:
+		return s.fetchJira(ctx, integ, from, to)
+	default:
+		return nil, fmt.Errorf("sync: tracker %q not implemented yet", integ.Provider)
+	}
+}
+
+func (s *SyncService) fetchJira(ctx context.Context, integ *domain.Integration, from, to time.Time) ([]integrations.Task, error) {
+	payloadStr, err := s.cipher.Decrypt(integ.AccessTokenEnc)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt token: %w", err)
+	}
+	if payloadStr == "" {
+		return nil, errors.New("sync: empty jira payload")
+	}
+
+	prov := jira.New()
+	tok := &integrations.Token{
+		TokenType: "basic",
+		Raw:       map[string]any{"payload": payloadStr},
+	}
+	// FetchTasks использует assignee — это email из payload, его подцепляет сам провайдер.
+	// Но интерфейс TrackerProvider требует assignee явно, поэтому передаём AccountEmail.
+	assignee := integ.AccountEmail
+	if assignee == "" {
+		// fallback: распарсим payload сами
+		var p jira.AuthPayload
+		_ = json.Unmarshal([]byte(payloadStr), &p)
+		assignee = p.Email
+	}
+	return prov.FetchTasks(ctx, tok, assignee, from, to)
 }
 
 func mapStatus(s string) domain.EventStatus {

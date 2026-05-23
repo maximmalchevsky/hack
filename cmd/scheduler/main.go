@@ -52,9 +52,9 @@ func main() {
 		queue   string
 		payload []byte
 	}{
-		// Каждые 5 минут пинаем sync-incremental — реальный fan-out по интеграциям
-		// делает worker (или отдельный enqueuer-job в спринте 2).
-		{"@every 5m", "scheduler:tick:sync-incremental", workers.QueueDefault, nil},
+		// Каждые 5 минут пинаем sync-incremental — fan-out по всем активным
+		// integrations делает worker (handleSyncTickAll).
+		{"@every 5m", workers.TaskSyncTickAll, workers.QueueDefault, nil},
 
 		// Каждые 25 минут — за 5 минут до истечения GigaChat access_token (30m TTL).
 		{"@every 25m", workers.TaskOAuthRefreshGigaChat, workers.QueueCritical, nil},
@@ -70,6 +70,12 @@ func main() {
 
 		// Понедельник 09:00 MSK (06:00 UTC) — собираем недельный digest для менеджеров.
 		{"0 6 * * 1", workers.TaskTeamDigestWeekly, workers.QueueLow, nil},
+
+		// Раз в час — пересчёт плана задач (Jira-планировщик) для всех сотрудников
+		// с активной tracker-интеграцией. fan-out по empoyees внутри worker'а.
+		{"@every 1h", workers.TaskTasksReplanAll, workers.QueueLow, nil},
+		// Раз в 30 минут — AI-оценка для задач без estimated_hours.
+		{"@every 30m", workers.TaskTasksAIEstimate, workers.QueueLow, nil},
 	}
 
 	for _, p := range periodic {

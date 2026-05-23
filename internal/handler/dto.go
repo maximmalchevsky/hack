@@ -262,20 +262,73 @@ type ConnectCalDAVRequest struct {
 	Label    string `json:"label,omitempty"`
 }
 
+type ConnectJiraRequest struct {
+	BaseURL  string `json:"base_url"`
+	Email    string `json:"email"`
+	APIToken string `json:"api_token"`
+	Label    string `json:"label,omitempty"`
+}
+
+// --- Tracker tasks DTO ---
+
+type TaskSlotDTO struct {
+	Date  string  `json:"date"` // YYYY-MM-DD
+	Hours float64 `json:"hours"`
+}
+
+type TrackerTaskDTO struct {
+	ID               uuid.UUID  `json:"id"`
+	IntegrationID    *uuid.UUID `json:"integration_id,omitempty"`
+	SourceTaskID     string     `json:"source_task_id"`
+	Title            string     `json:"title"`
+	Description      string     `json:"description,omitempty"`
+	Status           string     `json:"status,omitempty"`
+	Priority         string     `json:"priority,omitempty"`
+	Type             string     `json:"type,omitempty"`
+	DueAt            *time.Time `json:"due_at,omitempty"`
+	EstimatedHours   *float64   `json:"estimated_hours,omitempty"`
+	ActualHours      *float64   `json:"actual_hours,omitempty"`
+	AIEstimatedHours *float64   `json:"ai_estimated_hours,omitempty"`
+	AIConfidence     *float64   `json:"ai_confidence,omitempty"`
+	Slots            []TaskSlotDTO `json:"slots,omitempty"`
+}
+
+func TrackerTaskToDTO(t domain.TrackerTask) TrackerTaskDTO {
+	return TrackerTaskDTO{
+		ID:               t.ID,
+		IntegrationID:    t.IntegrationID,
+		SourceTaskID:     t.SourceTaskID,
+		Title:            t.Title,
+		Description:      t.Description,
+		Status:           t.Status,
+		Priority:         string(t.Priority),
+		Type:             t.Type,
+		DueAt:            t.DueAt,
+		EstimatedHours:   t.EstimatedHours,
+		ActualHours:      t.ActualHours,
+		AIEstimatedHours: t.AIEstimatedHours,
+		AIConfidence:     t.AIConfidence,
+	}
+}
+
 // --- Calendar Event DTO ---
 
 type CalendarEventDTO struct {
-	ID             uuid.UUID `json:"id"`
-	Title          string    `json:"title"`
-	Description    string    `json:"description,omitempty"`
-	StartAt        time.Time `json:"start_at"`
-	EndAt          time.Time `json:"end_at"`
-	Timezone       string    `json:"timezone,omitempty"`
-	AttendeesCount int       `json:"attendees_count,omitempty"`
-	Organizer      string    `json:"organizer,omitempty"`
-	Status         string    `json:"status"`
-	IsExcluded     bool      `json:"is_excluded,omitempty"`
-	Category       string    `json:"category,omitempty"`
+	ID             uuid.UUID  `json:"id"`
+	Title          string     `json:"title"`
+	Description    string     `json:"description,omitempty"`
+	StartAt        time.Time  `json:"start_at"`
+	EndAt          time.Time  `json:"end_at"`
+	Timezone       string     `json:"timezone,omitempty"`
+	AttendeesCount int        `json:"attendees_count,omitempty"`
+	Organizer      string     `json:"organizer,omitempty"`
+	Status         string     `json:"status"`
+	IsExcluded     bool       `json:"is_excluded,omitempty"`
+	Category       string     `json:"category,omitempty"`
+	// IntegrationID — UUID интеграции, через которую событие синкнуто. Null
+	// означает «нативное» событие Workie (создано через /scheduler или seed).
+	// На фронте — ключ фильтра «Источники» в стиле Outlook.
+	IntegrationID *uuid.UUID `json:"integration_id,omitempty"`
 }
 
 func EventToDTO(e domain.CalendarEvent) CalendarEventDTO {
@@ -295,6 +348,7 @@ func EventToDTO(e domain.CalendarEvent) CalendarEventDTO {
 		Status:         string(e.Status),
 		IsExcluded:     e.IsExcluded,
 		Category:       cat,
+		IntegrationID:  e.IntegrationID,
 	}
 }
 

@@ -92,13 +92,22 @@ func (p *Provider) FetchTasks(ctx context.Context, token *integrations.Token, as
 		return nil, err
 	}
 
-	// JQL: assignee = <email> AND duedate >= from AND duedate <= to
-	jql := fmt.Sprintf(`assignee = "%s" AND duedate >= "%s" AND duedate <= "%s" ORDER BY duedate ASC`,
+	// JQL: либо «мои незакрытые задачи», либо «у меня с дедлайном в окне».
+	// Берём оба варианта объединением: всё что мне назначено и не Done,
+	// плюс задачи с дедлайном в горизонте планирования. Без duedate
+	// в Jira куча задач, и они тоже нужны планировщику.
+	jql := fmt.Sprintf(
+		`assignee = "%s" AND (statusCategory != Done OR (duedate >= "%s" AND duedate <= "%s")) ORDER BY priority DESC, duedate ASC`,
 		assignee,
 		from.Format("2006-01-02"),
 		to.Format("2006-01-02"),
 	)
-	u := strings.TrimRight(payload.BaseURL, "/") + "/rest/api/3/search?jql=" + url.QueryEscape(jql) + "&maxResults=100"
+	// fields= ограничивает payload, чтобы не качать всё — только нужные нам.
+	fields := "summary,description,status,priority,issuetype,duedate,timeoriginalestimate,timespent"
+	u := strings.TrimRight(payload.BaseURL, "/") +
+		"/rest/api/3/search?jql=" + url.QueryEscape(jql) +
+		"&fields=" + url.QueryEscape(fields) +
+		"&maxResults=100"
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	req.SetBasicAuth(payload.Email, payload.APIToken)
@@ -117,11 +126,14 @@ func (p *Provider) FetchTasks(ctx context.Context, token *integrations.Token, as
 		Issues []struct {
 			Key    string `json:"key"`
 			Fields struct {
-				Summary           string  `json:"summary"`
-				Status            struct{ Name string } `json:"status"`
-				DueDate           string  `json:"duedate"`
-				TimeOriginalSec   int     `json:"timeoriginalestimate"`
-				TimeSpentSec      int     `json:"timespent"`
+				Summary         string `json:"summary"`
+				Description     any    `json:"description"` // в Jira Cloud это ADF-объект, в Server — строка
+				Status          struct{ Name string } `json:"status"`
+				Priority        *struct{ Name string } `json:"priority"`
+				IssueType       *struct{ Name string } `json:"issuetype"`
+				DueDate         string `json:"duedate"`
+				TimeOriginalSec int    `json:"timeoriginalestimate"`
+				TimeSpentSec    int    `json:"timespent"`
 			} `json:"fields"`
 		} `json:"issues"`
 	}
@@ -132,9 +144,16 @@ func (p *Provider) FetchTasks(ctx context.Context, token *integrations.Token, as
 	tasks := make([]integrations.Task, 0, len(out.Issues))
 	for _, iss := range out.Issues {
 		t := integrations.Task{
-			SourceID: iss.Key,
-			Title:    iss.Fields.Summary,
-			Status:   iss.Fields.Status.Name,
+			SourceID:    iss.Key,
+			Title:       iss.Fields.Summary,
+			Description: flattenDescription(iss.Fields.Description),
+			Status:      iss.Fields.Status.Name,
+		}
+		if iss.Fields.Priority != nil {
+			t.Priority = iss.Fields.Priority.Name
+		}
+		if iss.Fields.IssueType != nil {
+			t.Type = iss.Fields.IssueType.Name
 		}
 		if iss.Fields.DueDate != "" {
 			if due, err := time.Parse("2006-01-02", iss.Fields.DueDate); err == nil {
@@ -152,4 +171,43 @@ func (p *Provider) FetchTasks(ctx context.Context, token *integrations.Token, as
 		tasks = append(tasks, t)
 	}
 	return tasks, nil
+}
+
+// flattenDescription — Jira Cloud отдаёт описание как ADF (Atlassian Document
+// Format) — вложенный JSON-объект с типами text/heading/paragraph/list/...
+// На MVP не парсим всю структуру: вытаскиваем все строки `text` из листьев.
+// Если description пришёл строкой (Server/legacy) — возвращаем как есть.
+func flattenDescription(d any) string {
+	switch v := d.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(v)
+	case map[string]any:
+		var sb strings.Builder
+		walkADF(v, &sb)
+		return strings.TrimSpace(sb.String())
+	default:
+		return ""
+	}
+}
+
+func walkADF(node map[string]any, sb *strings.Builder) {
+	if t, _ := node["type"].(string); t == "text" {
+		if s, _ := node["text"].(string); s != "" {
+			sb.WriteString(s)
+			sb.WriteString(" ")
+		}
+	}
+	if content, ok := node["content"].([]any); ok {
+		for _, c := range content {
+			if child, ok := c.(map[string]any); ok {
+				walkADF(child, sb)
+			}
+		}
+		// Между «параграфами» — перенос.
+		if t, _ := node["type"].(string); t == "paragraph" || t == "heading" {
+			sb.WriteString("\n")
+		}
+	}
 }

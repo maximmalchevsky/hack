@@ -26,6 +26,9 @@ type ProposeMeetingRequest struct {
 	EndAt    time.Time `json:"end_at"`
 	Title    string    `json:"title,omitempty"`
 	Category string    `json:"category,omitempty"` // пусто = «определить автоматически»
+	// InviteeEmpIDs — опциональный список для межкомандной встречи.
+	// Если задан — заменяет состав команды из URL.
+	InviteeEmpIDs []uuid.UUID `json:"invitee_emp_ids,omitempty"`
 }
 
 func (h *TeamHandler) proposeMeeting(c fiber.Ctx) error {
@@ -46,11 +49,89 @@ func (h *TeamHandler) proposeMeeting(c fiber.Ctx) error {
 		EndAt:         req.EndAt,
 		Title:         req.Title,
 		Category:      req.Category,
+		InviteeEmpIDs: req.InviteeEmpIDs,
 		InitiatorUser: middleware.UserID(c),
 		InitiatorEmp:  middleware.EmployeeID(c),
 	})
 	if err != nil {
 		if errors.Is(err, service.ErrMeetingInvalidRange) {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+		return err
+	}
+	return c.JSON(res)
+}
+
+// --- межкомандная встреча: find-window + propose без привязки к одной команде ---
+
+type CrossFindWindowRequest struct {
+	EmployeeIDs []uuid.UUID `json:"employee_ids"`
+	DurationMin int         `json:"duration_min"`
+	Days        int         `json:"days"`
+	Timezone    string      `json:"tz"`
+	TopN        int         `json:"top_n"`
+}
+
+func (h *TeamHandler) crossFindWindow(c fiber.Ctx) error {
+	var req CrossFindWindowRequest
+	_ = c.Bind().Body(&req)
+	if len(req.EmployeeIDs) == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "employee_ids required")
+	}
+	windows, err := h.svc.FindWindowsForEmployees(c.Context(), service.FindCrossWindowsInput{
+		EmployeeIDs: req.EmployeeIDs,
+		DurationMin: req.DurationMin,
+		Days:        req.Days,
+		ViewerTZ:    req.Timezone,
+		TopN:        req.TopN,
+	})
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"windows": windows})
+}
+
+// CrossProposeRequest — создание межкомандной встречи без TeamID в URL.
+type CrossProposeRequest struct {
+	StartAt       time.Time   `json:"start_at"`
+	EndAt         time.Time   `json:"end_at"`
+	Title         string      `json:"title,omitempty"`
+	Category      string      `json:"category,omitempty"`
+	EmployeeIDs   []uuid.UUID `json:"employee_ids"`
+	// PrimaryTeamID опционально — какая команда «главная» для отображения.
+	// Если пуст — TeamName = «Несколько команд».
+	PrimaryTeamID *uuid.UUID  `json:"primary_team_id,omitempty"`
+}
+
+func (h *TeamHandler) crossProposeMeeting(c fiber.Ctx) error {
+	if h.proposal == nil {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "meeting proposal not configured")
+	}
+	var req CrossProposeRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
+	}
+	if len(req.EmployeeIDs) == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "employee_ids required")
+	}
+	var primaryTeamID uuid.UUID
+	if req.PrimaryTeamID != nil {
+		primaryTeamID = *req.PrimaryTeamID
+	}
+	res, err := h.proposal.Propose(c.Context(), service.ProposeMeetingInput{
+		TeamID:        primaryTeamID,
+		StartAt:       req.StartAt,
+		EndAt:         req.EndAt,
+		Title:         req.Title,
+		Category:      req.Category,
+		InviteeEmpIDs: req.EmployeeIDs,
+		InitiatorUser: middleware.UserID(c),
+		InitiatorEmp:  middleware.EmployeeID(c),
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrMeetingInvalidRange),
+			errors.Is(err, service.ErrMeetingNoParticipants):
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
 		return err
@@ -72,6 +153,34 @@ func (h *TeamHandler) Mount(r fiber.Router) {
 	g.Get("/:id/availability", h.availability)
 	g.Post("/:id/find-window", h.findWindow)
 	g.Post("/:id/propose-meeting", h.proposeMeeting)
+
+	// Межкомандные встречи — без team_id в URL.
+	cross := r.Group("/cross-team-meetings")
+	cross.Post("/find-window", h.crossFindWindow)
+	cross.Post("/propose", h.crossProposeMeeting)
+	// Список всех команд — чтобы менеджер мог выбрать чужую команду для
+	// межкомандной встречи (стандартный /teams возвращает только свои).
+	cross.Get("/teams", h.listAllTeams)
+}
+
+// listAllTeams — GET /cross-team-meetings/teams. Все команды организации
+// для multi-select в межкомандном режиме на /scheduler. RBAC внутри сервиса.
+func (h *TeamHandler) listAllTeams(c fiber.Ctx) error {
+	role := string(middleware.CurrentRole(c))
+	list, err := h.svc.ListAllForMeetings(c.Context(), role)
+	if err != nil {
+		return mapTeamErr(err)
+	}
+	out := make([]fiber.Map, 0, len(list))
+	for _, t := range list {
+		out = append(out, fiber.Map{
+			"id":         t.ID,
+			"name":       t.Name,
+			"owner_id":   t.OwnerID,
+			"created_at": t.CreatedAt,
+		})
+	}
+	return c.JSON(fiber.Map{"teams": out})
 }
 
 // --- write endpoints ---

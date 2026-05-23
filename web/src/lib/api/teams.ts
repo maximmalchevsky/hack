@@ -69,10 +69,20 @@ export const getAvailability = (id: string, tz?: string) => {
 
 export type UnavailableReason = 'busy' | 'in_exception' | 'outside_hours' | 'no_profile';
 
+export type ExceptionKind =
+	| 'vacation'
+	| 'sick_leave'
+	| 'business_trip'
+	| 'personal_hours'
+	| 'custom';
+
 export interface MeetingParticipant {
 	employee_id: string;
 	full_name: string;
 	reason?: UnavailableReason;
+	// Заполнено только когда reason='in_exception'. Используется для текста
+	// конкретного типа отсутствия: «отпуск», «больничный», «командировка».
+	exception_kind?: ExceptionKind;
 	// Локальное окно встречи в TZ участника, например "07:00–08:00".
 	local_time?: string;
 	// Рабочие часы участника в этот день недели в его TZ, например "10:00–18:00".
@@ -139,5 +149,33 @@ export type MeetingCategory = (typeof MEETING_CATEGORIES)[number];
 
 export const proposeMeeting = (
 	teamID: string,
-	body: { start_at: string; end_at: string; title?: string; category?: string }
+	body: { start_at: string; end_at: string; title?: string; category?: string; invitee_emp_ids?: string[] }
 ) => api.post<ProposeMeetingResult>(`/api/v1/teams/${teamID}/propose-meeting`, body);
+
+// --- Cross-team meetings ---
+
+// listAllTeamsForMeetings — все команды организации (для multi-select в
+// межкомандном режиме на /scheduler). RBAC внутри backend: только manager/pm/hr/admin.
+export const listAllTeamsForMeetings = () =>
+	api.get<{ teams: Team[] }>('/api/v1/cross-team-meetings/teams');
+
+export const findCrossWindow = (body: {
+	employee_ids: string[];
+	duration_min: number;
+	days: number;
+	tz?: string;
+	top_n?: number;
+}) =>
+	api.post<{ windows: MeetingWindow[] }>(
+		'/api/v1/cross-team-meetings/find-window',
+		body
+	);
+
+export const proposeCrossMeeting = (body: {
+	start_at: string;
+	end_at: string;
+	title?: string;
+	category?: string;
+	employee_ids: string[];
+	primary_team_id?: string;
+}) => api.post<ProposeMeetingResult>('/api/v1/cross-team-meetings/propose', body);

@@ -166,7 +166,8 @@ func (s *RecommendationService) Generate(ctx context.Context, employeeID uuid.UU
 
 // ComputeMetrics — отдельная функция: считает метрики без вызова recommender'а.
 // Используется хендлером /metrics/employee/:id.
-// Кэширует результат в Redis на 15 минут.
+// Кэширует результат в Redis на 15 минут + при каждом РЕАЛЬНОМ пересчёте
+// (без cache hit) пишет snapshot в БД для исторической аналитики и /analytics.
 func (s *RecommendationService) ComputeMetrics(ctx context.Context, employeeID uuid.UUID) (ai.Metrics, error) {
 	if s.cache != nil {
 		if cached, ok := s.cache.Get(ctx, employeeID); ok {
@@ -180,7 +181,23 @@ func (s *RecommendationService) ComputeMetrics(ctx context.Context, employeeID u
 	if s.cache != nil {
 		s.cache.Set(ctx, employeeID, snap.Metrics)
 	}
+	s.persistSnapshot(ctx, employeeID, snap.Metrics)
 	return snap.Metrics, nil
+}
+
+// persistSnapshot — пишет одну строку в metrics_snapshots. Лучше делать best-effort:
+// если запись упала, метрика всё равно отдана клиенту (и закэширована в Redis).
+// period — последние 30 дней до now(), это окно по умолчанию для C/L/Z.
+func (s *RecommendationService) persistSnapshot(ctx context.Context, employeeID uuid.UUID, m ai.Metrics) {
+	now := time.Now().UTC()
+	periodStart := now.AddDate(0, 0, -30)
+	_, _ = s.pool.Exec(ctx, `
+		INSERT INTO metrics_snapshots
+			(employee_id, computed_at, period_start, period_end,
+			 freshness_a, conflicts_c, load_l, tz_drift_z, hr_calendar_h, risk_r)
+		VALUES ($1, now(), $2, $3,
+		        $4, $5, $6, $7, $8, $9)
+	`, employeeID, periodStart, now, m.A, m.C, m.L, m.Z, m.H, m.R)
 }
 
 // InvalidateMetrics — вызывается из service'ов, меняющих профиль/события/исключения.

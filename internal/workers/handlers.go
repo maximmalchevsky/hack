@@ -28,6 +28,7 @@ type Deps struct {
 	Notifications   *service.NotificationService // для reminder-сканера
 	TeamDigest      *service.TeamWeeklyDigestService
 	MeetingPrep     *service.MeetingPrepService
+	TaskPlanner     *service.TaskPlannerService // nil если интеграция отключена
 }
 
 // SmartNotifierRunner — лёгкий интерфейс, чтобы workers/ не зависел от notifier-пакета.
@@ -55,6 +56,106 @@ func (h *Handlers) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(TaskDigestDaily, h.handleDigestDaily)
 	mux.HandleFunc(TaskReminderScan, h.handleReminderScan)
 	mux.HandleFunc(TaskTeamDigestWeekly, h.handleTeamDigestWeekly)
+	mux.HandleFunc(TaskSyncTickAll, h.handleSyncTickAll)
+	mux.HandleFunc(TaskTasksReplanAll, h.handleTasksReplanAll)
+	mux.HandleFunc(TaskTasksAIEstimate, h.handleTasksAIEstimate)
+}
+
+// handleTasksReplanAll — раз в час дёргаем Plan для всех сотрудников с активными
+// tracker-интеграциями (Jira). Полный пересчёт task_plan_slots.
+func (h *Handlers) handleTasksReplanAll(ctx context.Context, _ *asynq.Task) error {
+	if h.deps.Pool == nil || h.deps.TaskPlanner == nil {
+		return nil
+	}
+	ids, err := h.listEmpsWithTracker(ctx)
+	if err != nil {
+		return err
+	}
+	planned := 0
+	for _, id := range ids {
+		if _, err := h.deps.TaskPlanner.Plan(ctx, id); err == nil {
+			planned++
+		}
+	}
+	if planned > 0 {
+		h.deps.Log.Info().Int("count", planned).Msg("tasks replan: planned for employees")
+	}
+	return nil
+}
+
+// handleTasksAIEstimate — раз в 30 минут дёргает AI-оценку для задач без estimate.
+// Лимит 20 LLM-вызовов на сотрудника за тик — не сжигаем токены за раз.
+func (h *Handlers) handleTasksAIEstimate(ctx context.Context, _ *asynq.Task) error {
+	if h.deps.Pool == nil || h.deps.TaskPlanner == nil {
+		return nil
+	}
+	ids, err := h.listEmpsWithTracker(ctx)
+	if err != nil {
+		return err
+	}
+	totalCalls := 0
+	for _, id := range ids {
+		n, _ := h.deps.TaskPlanner.EnsureEstimates(ctx, id, 20)
+		totalCalls += n
+	}
+	if totalCalls > 0 {
+		h.deps.Log.Info().Int("ai_calls", totalCalls).Msg("tasks ai-estimate: filled")
+	}
+	return nil
+}
+
+// listEmpsWithTracker — employee_id всех, у кого есть активная Jira/Yandex Tracker
+// интеграция. Чтобы не дёргать planner для сотрудников без задач.
+func (h *Handlers) listEmpsWithTracker(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := h.deps.Pool.Query(ctx, `
+		SELECT DISTINCT employee_id FROM integrations
+		WHERE status = 'connected'
+		  AND provider IN ('jira', 'yandex_tracker')
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err == nil {
+			out = append(out, id)
+		}
+	}
+	return out, rows.Err()
+}
+
+// handleSyncTickAll — scheduler пинает раз в 5 минут одной задачей. Мы
+// разворачиваем её в N задач sync:incremental для всех активных интеграций.
+// Сами sync'и выполняются в той же очереди и распараллеливаются Asynq'ом.
+func (h *Handlers) handleSyncTickAll(ctx context.Context, _ *asynq.Task) error {
+	if h.deps.Pool == nil || h.deps.Enqueuer == nil {
+		return nil
+	}
+	rows, err := h.deps.Pool.Query(ctx, `
+		SELECT id FROM integrations
+		WHERE status = 'connected'
+	`)
+	if err != nil {
+		return fmt.Errorf("sync tick: list integrations: %w", err)
+	}
+	defer rows.Close()
+
+	queued := 0
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			continue
+		}
+		if err := h.deps.Enqueuer.EnqueueSyncIncremental(id); err == nil {
+			queued++
+		}
+	}
+	if queued > 0 {
+		h.deps.Log.Info().Int("count", queued).Msg("sync tick: enqueued incremental for active integrations")
+	}
+	return nil
 }
 
 // handleTeamDigestWeekly — для каждого менеджера/HR/admin (т.е. employee, у которого есть свои команды)

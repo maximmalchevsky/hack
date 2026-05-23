@@ -2,7 +2,9 @@ package notify
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/smtp"
@@ -150,6 +152,127 @@ func senderAddress(from string) string {
 		}
 	}
 	return from
+}
+
+// SendCalendarInvite — отправляет iMIP-инвайт: multipart/mixed письмо с
+// text/plain (читаемое описание) + text/calendar; method=REQUEST (тот самый
+// .ics, по которому Gmail/Apple/Outlook покажут кнопки Accept/Decline).
+//
+// replyTo — отдельный почтовый ящик, на который Gmail отправит REPLY-письмо
+// при accept. Этот же адрес стоит в ORGANIZER внутри .ics (см. imip.BuildInvitation).
+// fromDisplayName — отображаемое имя инициатора («Игорь Климов»),
+// чтобы получатель видел «Workie от Игорь Климов <invites@...>».
+func (t *EmailTransport) SendCalendarInvite(
+	ctx context.Context,
+	to, subject, plain, ics, replyTo, fromDisplayName string,
+) error {
+	if t.disabled {
+		return errors.New("email transport disabled")
+	}
+	if to == "" {
+		return errors.New("recipient email is empty")
+	}
+	if ics == "" {
+		return errors.New("ics body is empty")
+	}
+
+	from := t.from
+	if fromDisplayName != "" && replyTo != "" {
+		// «Workie от Игорь Климов <invites@my-domain.ru>» — корректный RFC 5322
+		// формат, при котором Reply-To не нужен (но мы всё равно ставим — Gmail
+		// иногда игнорирует адрес в From и шлёт ответ на envelope-sender).
+		from = fmt.Sprintf("%s <%s>",
+			mimeEncode("Workie от "+fromDisplayName), replyTo)
+	}
+
+	addr := fmt.Sprintf("%s:%d", t.host, t.port)
+	boundary := "wkmime_" + randomHex(8)
+
+	// Заголовки + multipart-тело.
+	headers := []string{
+		"From: " + from,
+		"To: " + to,
+		"Subject: " + mimeEncode(subject),
+		"MIME-Version: 1.0",
+		`Content-Type: multipart/mixed; boundary="` + boundary + `"`,
+	}
+	if replyTo != "" {
+		headers = append(headers, "Reply-To: "+replyTo)
+	}
+
+	var sb strings.Builder
+	for _, h := range headers {
+		sb.WriteString(h)
+		sb.WriteString("\r\n")
+	}
+	sb.WriteString("\r\n")
+
+	// Часть 1 — text/plain (читаемое описание).
+	sb.WriteString("--" + boundary + "\r\n")
+	sb.WriteString(`Content-Type: text/plain; charset="utf-8"` + "\r\n")
+	sb.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
+	sb.WriteString(plain)
+	sb.WriteString("\r\n\r\n")
+
+	// Часть 2 — text/calendar; method=REQUEST (.ics).
+	// method=REQUEST в Content-Type — критично: без него Gmail не покажет
+	// кнопки RSVP. Также добавляем как attachment чтобы Outlook не запутался.
+	sb.WriteString("--" + boundary + "\r\n")
+	sb.WriteString(`Content-Type: text/calendar; charset="utf-8"; method=REQUEST; name="invite.ics"` + "\r\n")
+	sb.WriteString("Content-Transfer-Encoding: 8bit\r\n")
+	sb.WriteString(`Content-Disposition: attachment; filename="invite.ics"` + "\r\n\r\n")
+	sb.WriteString(ics)
+	sb.WriteString("\r\n\r\n")
+
+	sb.WriteString("--" + boundary + "--\r\n")
+
+	// SMTP-flow — тот же что в Send().
+	c, err := smtp.Dial(addr)
+	if err != nil {
+		return fmt.Errorf("smtp dial: %w", err)
+	}
+	defer c.Close()
+	if err := c.Hello("worktime-sync"); err != nil {
+		return fmt.Errorf("smtp hello: %w", err)
+	}
+	if t.startTLS {
+		if ok, _ := c.Extension("STARTTLS"); ok {
+			tlsCfg := &tls.Config{ServerName: t.host, MinVersion: tls.VersionTLS12}
+			if err := c.StartTLS(tlsCfg); err != nil {
+				return fmt.Errorf("starttls: %w", err)
+			}
+		}
+	}
+	if t.user != "" && t.pass != "" {
+		auth := smtp.PlainAuth("", t.user, t.pass, t.host)
+		if err := c.Auth(auth); err != nil {
+			return fmt.Errorf("smtp auth: %w", err)
+		}
+	}
+	if err := c.Mail(senderAddress(from)); err != nil {
+		return fmt.Errorf("smtp mail: %w", err)
+	}
+	if err := c.Rcpt(to); err != nil {
+		return fmt.Errorf("smtp rcpt: %w", err)
+	}
+	wc, err := c.Data()
+	if err != nil {
+		return fmt.Errorf("smtp data: %w", err)
+	}
+	if _, err := wc.Write([]byte(sb.String())); err != nil {
+		_ = wc.Close()
+		return fmt.Errorf("smtp write: %w", err)
+	}
+	if err := wc.Close(); err != nil {
+		return fmt.Errorf("smtp close data: %w", err)
+	}
+	return c.Quit()
+}
+
+func randomHex(n int) string {
+	b := make([]byte, n)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // mimeEncode — UTF-8 subject (RFC 2047 B-encoding).

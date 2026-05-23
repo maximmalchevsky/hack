@@ -10,6 +10,7 @@
 		listIntegrations,
 		connectICal,
 		connectCalDAV,
+		connectJira,
 		triggerSync,
 		removeIntegration,
 		type Integration
@@ -32,6 +33,13 @@
 	let cdPassword = $state('');
 	let cdLabel = $state('');
 	let cdBusy = $state(false);
+
+	// Jira form
+	let jiraBaseURL = $state('https://yourorg.atlassian.net');
+	let jiraEmail = $state('');
+	let jiraToken = $state('');
+	let jiraLabel = $state('');
+	let jiraBusy = $state(false);
 
 	onMount(async () => {
 		await load();
@@ -117,6 +125,29 @@
 			error = e instanceof ApiError ? e.message : String(e);
 		} finally {
 			cdBusy = false;
+		}
+	}
+
+	async function submitJira() {
+		jiraBusy = true;
+		error = null;
+		success = null;
+		try {
+			await connectJira({
+				base_url: jiraBaseURL,
+				email: jiraEmail,
+				api_token: jiraToken,
+				label: jiraLabel || undefined
+			});
+			success = 'Jira подключена, sync задач запущен';
+			jiraEmail = '';
+			jiraToken = '';
+			jiraLabel = '';
+			await load();
+		} catch (e) {
+			error = e instanceof ApiError ? e.message : String(e);
+		} finally {
+			jiraBusy = false;
 		}
 	}
 
@@ -281,6 +312,37 @@
 		</div>
 		<Button variant="primary" icon="ti-plug" onclick={submitCalDAV} disabled={cdBusy}>
 			{cdBusy ? 'Подключаем…' : 'Подключить'}
+		</Button>
+	</Card>
+</div>
+
+<div style="margin-bottom: 24px;">
+	<Card title="Подключить Jira" subtitle="Jira Cloud (Atlassian) — задачи попадут в /tasks для автоматического планирования">
+		<div class="grid-2" style="gap: 12px;">
+			<div class="field">
+				<label class="field__label" for="jira-url">URL</label>
+				<input id="jira-url" type="text" bind:value={jiraBaseURL} placeholder="https://yourorg.atlassian.net" />
+				<div class="field__hint">Адрес твоего workspace, без слэша в конце</div>
+			</div>
+			<div class="field">
+				<label class="field__label" for="jira-email">Email</label>
+				<input id="jira-email" type="email" bind:value={jiraEmail} placeholder="you@example.com" />
+			</div>
+			<div class="field">
+				<label class="field__label" for="jira-token">API token</label>
+				<input id="jira-token" type="password" bind:value={jiraToken} />
+				<div class="field__hint">
+					Создай на
+					<a href="https://id.atlassian.com/manage-profile/security/api-tokens" target="_blank" rel="noopener">id.atlassian.com</a>
+				</div>
+			</div>
+			<div class="field">
+				<label class="field__label" for="jira-label">Метка</label>
+				<input id="jira-label" type="text" bind:value={jiraLabel} placeholder="Jira" />
+			</div>
+		</div>
+		<Button variant="primary" icon="ti-plug" onclick={submitJira} disabled={jiraBusy}>
+			{jiraBusy ? 'Подключаем…' : 'Подключить'}
 		</Button>
 	</Card>
 </div>

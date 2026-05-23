@@ -23,6 +23,25 @@ type Config struct {
 	CORS      CORS
 	SMTP      SMTP
 	Telegram  Telegram
+	IMIP      IMIP
+}
+
+// IMIP — рассылка календарных инвайтов (.ics, RFC 6047) при создании встречи
+// и IMAP-приём ответов (Accept/Decline из Gmail/Apple) для автоматического
+// проставления meeting_responses.status.
+//
+// Если Enabled=false или ReplyTo пустой — iMIP не отправляем, IMAP-poller
+// не стартует. Существующие notifications.Push (email/Telegram) продолжают
+// работать независимо.
+type IMIP struct {
+	Enabled          bool          `env:"IMIP_ENABLED" envDefault:"false"`
+	ReplyTo          string        `env:"IMIP_REPLY_TO"`                    // invites@my-domain.ru — ставится в ORGANIZER и Reply-To
+	IMAPHost         string        `env:"IMAP_HOST"`
+	IMAPPort         int           `env:"IMAP_PORT" envDefault:"993"`
+	IMAPUser         string        `env:"IMAP_USER"`
+	IMAPPass         string        `env:"IMAP_PASS"`
+	IMAPMailbox      string        `env:"IMAP_MAILBOX" envDefault:"INBOX"`
+	PollInterval     time.Duration `env:"IMAP_POLL_INTERVAL" envDefault:"60s"`
 }
 
 type SMTP struct {

@@ -6,11 +6,16 @@
 	import Button from '$lib/components/Button.svelte';
 	import {
 		listTeams,
+		listAllTeamsForMeetings,
+		listMembers as listTeamMembers,
 		findWindow,
 		proposeMeeting,
+		findCrossWindow,
+		proposeCrossMeeting,
 		MEETING_CATEGORIES,
 		type Team,
 		type MeetingWindow,
+		type MeetingParticipant,
 		type UnavailableReason
 	} from '$lib/api/teams';
 	import {
@@ -24,6 +29,10 @@
 	import { user } from '$lib/stores/user';
 
 	let teams = $state<Team[]>([]);
+	// allTeams — все команды организации (для multi-select в межкомандном режиме).
+	// Грузим лениво при первом включении crossMode.
+	let allTeams = $state<Team[]>([]);
+	let allTeamsLoaded = $state(false);
 	let selectedTeamID = $state<string | null>(null);
 	let duration = $state(60);
 	let days = $state(7);
@@ -41,6 +50,92 @@
 	let meetingTitle = $state('');
 	// Тип встречи — пустая строка значит «определить автоматически» (GigaChat).
 	let meetingCategory = $state('');
+
+	// --- Межкомандная встреча ---
+	let crossMode = $state(false);
+	// Идентификаторы выбранных команд (для multi-select).
+	let crossTeamIDs = $state<string[]>([]);
+	// Кэш участников по команде: teamID → массив members.
+	type TeamMember = { employee_id: string; full_name: string };
+	let teamMembersCache = $state<Record<string, TeamMember[]>>({});
+	// Список «выключенных» empID — пользователь снял галочку в сводном списке.
+	let crossExcluded = $state(new Set<string>());
+
+	// Сводный (uniq) список участников из выбранных команд.
+	const crossAllMembers = $derived.by(() => {
+		const seen = new Map<string, { team_id: string; team_name: string; member: TeamMember }>();
+		for (const tid of crossTeamIDs) {
+			// Имя команды берём из объединённого списка: чужие команды лежат в
+			// allTeams, свои — в teams.
+			const team = allTeams.find((t) => t.id === tid) ?? teams.find((t) => t.id === tid);
+			const teamName = team?.name ?? '';
+			const ms = teamMembersCache[tid] ?? [];
+			for (const m of ms) {
+				if (!seen.has(m.employee_id)) {
+					seen.set(m.employee_id, { team_id: tid, team_name: teamName, member: m });
+				}
+			}
+		}
+		return Array.from(seen.values());
+	});
+
+	// Финальный список emp_id, который пойдёт в API. = все из crossAllMembers
+	// минус crossExcluded.
+	const crossFinalEmpIDs = $derived(
+		crossAllMembers
+			.filter((x) => !crossExcluded.has(x.member.employee_id))
+			.map((x) => x.member.employee_id)
+	);
+
+	// loadAllTeams — подтягиваем список всех команд для multi-select. Один раз
+	// на сессию: после первого включения crossMode дальше переключаем тоггл
+	// без повторного запроса.
+	async function loadAllTeams() {
+		if (allTeamsLoaded) return;
+		try {
+			const r = await listAllTeamsForMeetings();
+			allTeams = r.teams ?? [];
+			allTeamsLoaded = true;
+		} catch {
+			// fallback: используем «свои» команды — лучше что-то чем ничего.
+			allTeams = teams;
+			allTeamsLoaded = true;
+		}
+	}
+
+	// Реактивный список команд для UI multi-select.
+	const teamsForCross = $derived(allTeamsLoaded ? allTeams : teams);
+
+	async function toggleCrossTeam(teamID: string) {
+		const idx = crossTeamIDs.indexOf(teamID);
+		if (idx >= 0) {
+			crossTeamIDs = crossTeamIDs.filter((id) => id !== teamID);
+		} else {
+			crossTeamIDs = [...crossTeamIDs, teamID];
+			// Lazy load members команды.
+			if (!teamMembersCache[teamID]) {
+				try {
+					const r = await listTeamMembers(teamID);
+					teamMembersCache = {
+						...teamMembersCache,
+						[teamID]: (r.members ?? []).map((m) => ({
+							employee_id: m.employee_id,
+							full_name: m.full_name
+						}))
+					};
+				} catch {
+					teamMembersCache = { ...teamMembersCache, [teamID]: [] };
+				}
+			}
+		}
+	}
+
+	function toggleCrossEmp(empID: string) {
+		const next = new Set(crossExcluded);
+		if (next.has(empID)) next.delete(empID);
+		else next.add(empID);
+		crossExcluded = next;
+	}
 
 	// Мои созданные встречи.
 	let myMeetings = $state<MyMeeting[]>([]);
@@ -196,17 +291,32 @@
 	}
 
 	async function search() {
-		if (!selectedTeamID) return;
 		searching = true;
 		error = null;
 		try {
-			const r = await findWindow(selectedTeamID, {
-				duration_min: duration,
-				days,
-				tz: viewerTZ,
-				top_n: 3
-			});
-			windows = r.windows ?? [];
+			if (crossMode) {
+				if (crossFinalEmpIDs.length === 0) {
+					error = 'Выбери хотя бы одного участника';
+					return;
+				}
+				const r = await findCrossWindow({
+					employee_ids: crossFinalEmpIDs,
+					duration_min: duration,
+					days,
+					tz: viewerTZ,
+					top_n: 3
+				});
+				windows = r.windows ?? [];
+			} else {
+				if (!selectedTeamID) return;
+				const r = await findWindow(selectedTeamID, {
+					duration_min: duration,
+					days,
+					tz: viewerTZ,
+					top_n: 3
+				});
+				windows = r.windows ?? [];
+			}
 		} catch (e) {
 			error = e instanceof ApiError ? e.message : String(e);
 		} finally {
@@ -229,14 +339,29 @@
 		return Math.round((av / total) * 100);
 	}
 
-	function reasonLabel(r?: UnavailableReason): string {
-		switch (r) {
+	function reasonLabel(p: MeetingParticipant): string {
+		// Конкретный тип отсутствия в приоритете — он точнее «общего» reason.
+		if (p.reason === 'in_exception' && p.exception_kind) {
+			switch (p.exception_kind) {
+				case 'vacation':
+					return 'в отпуске';
+				case 'sick_leave':
+					return 'на больничном';
+				case 'business_trip':
+					return 'в командировке';
+				case 'personal_hours':
+					return 'личное время';
+				case 'custom':
+					return 'отсутствует';
+			}
+		}
+		switch (p.reason) {
 			case 'busy':
 				return 'занят встречей';
 			case 'in_exception':
-				return 'отсутствие';
+				return 'отсутствует';
 			case 'outside_hours':
-				return 'вне графика';
+				return 'вне рабочего времени';
 			case 'no_profile':
 				return 'нет графика';
 			default:
@@ -267,35 +392,42 @@
 	}
 
 	async function create(w: MeetingWindow) {
-		if (!selectedTeamID) return;
-
 		// Предупреждение если кому-то это будет вне его графика.
 		const offHours = w.unavailable.filter((p) => p.reason === 'outside_hours');
 		if (offHours.length > 0) {
-			const lines = offHours.map((p) => {
-				const lt = p.local_time ? ` — у него ${p.local_time}` : '';
-				const wh = p.work_hours ? `, график ${p.work_hours}` : '';
-				const tz = p.timezone ? ` (${p.timezone})` : '';
-				return `• ${p.full_name}${lt}${wh}${tz}`;
-			});
+			const lines = offHours.map((p) => `• ${p.full_name}`);
 			const msg =
 				`Эта встреча будет вне рабочих часов у ${offHours.length}:\n\n${lines.join('\n')}\n\nВсё равно создать?`;
 			if (!confirm(msg)) return;
 		}
 
-		const team = teams.find((t) => t.id === selectedTeamID);
-		const teamName = team?.name ?? '';
 		const key = w.start_at;
 		creatingKey = key;
 		error = null;
 		success = null;
 		try {
-			const r = await proposeMeeting(selectedTeamID, {
-				start_at: w.start_at,
-				end_at: w.end_at,
-				title: meetingTitle.trim() || `Встреча команды «${teamName}»`,
-				category: meetingCategory || undefined
-			});
+			let r;
+			if (crossMode) {
+				const defaultTitle = `Межкомандная встреча (${crossFinalEmpIDs.length} участников)`;
+				r = await proposeCrossMeeting({
+					start_at: w.start_at,
+					end_at: w.end_at,
+					title: meetingTitle.trim() || defaultTitle,
+					category: meetingCategory || undefined,
+					employee_ids: crossFinalEmpIDs,
+					primary_team_id: crossTeamIDs[0] || undefined
+				});
+			} else {
+				if (!selectedTeamID) return;
+				const team = teams.find((t) => t.id === selectedTeamID);
+				const teamName = team?.name ?? '';
+				r = await proposeMeeting(selectedTeamID, {
+					start_at: w.start_at,
+					end_at: w.end_at,
+					title: meetingTitle.trim() || `Встреча команды «${teamName}»`,
+					category: meetingCategory || undefined
+				});
+			}
 			createdKeys = new Set(createdKeys).add(key);
 			const parts = [`Уведомление отправлено ${r.sent} участникам`];
 			if (r.yandex_pushed && r.yandex_pushed > 0) {
@@ -469,15 +601,67 @@
 		</Card>
 	{:else}
 		<Card title="Параметры">
-		<div class="flex flex-wrap gap-3" style="align-items: end;">
-			<div class="field" style="margin-bottom: 0;">
-				<label class="field__label" for="team">Команда</label>
-				<select id="team" bind:value={selectedTeamID} style="width: 200px;">
-					{#each teams as t (t.id)}
-						<option value={t.id}>{t.name}</option>
-					{/each}
-				</select>
+		<!-- Тоггл режима: одна команда vs межкомандная встреча -->
+		<div class="mode-switch">
+			<button
+				class="mode-switch__btn"
+				class:mode-switch__btn--active={!crossMode}
+				onclick={() => (crossMode = false)}
+				type="button"
+			>
+				<i class="ti ti-users"></i>
+				Командная
+			</button>
+			<button
+				class="mode-switch__btn"
+				class:mode-switch__btn--active={crossMode}
+				onclick={() => {
+					crossMode = true;
+					void loadAllTeams();
+				}}
+				type="button"
+			>
+				<i class="ti ti-users-group"></i>
+				Межкомандная
+			</button>
+		</div>
+
+		<!-- В межкомандном режиме multi-select команд — отдельной строкой
+		     над общими параметрами, чтобы не ломать выравнивание остальных полей. -->
+		{#if crossMode}
+			<div class="field" style="margin-bottom: 12px;">
+				<label class="field__label">Команды</label>
+				<div class="cross-teams">
+					{#if teamsForCross.length === 0}
+						<span class="text-text-3 text-xs">Загрузка…</span>
+					{:else}
+						{#each teamsForCross as t (t.id)}
+							<label class="cross-teams__item">
+								<input
+									type="checkbox"
+									checked={crossTeamIDs.includes(t.id)}
+									onchange={() => toggleCrossTeam(t.id)}
+								/>
+								<span>{t.name}</span>
+							</label>
+						{/each}
+					{/if}
+				</div>
+				<div class="field__hint">Выбери 2+ команд — их участники сложатся в общий список</div>
 			</div>
+		{/if}
+
+		<div class="flex flex-wrap gap-3" style="align-items: end;">
+			{#if !crossMode}
+				<div class="field" style="margin-bottom: 0;">
+					<label class="field__label" for="team">Команда</label>
+					<select id="team" bind:value={selectedTeamID} style="width: 200px;">
+						{#each teams as t (t.id)}
+							<option value={t.id}>{t.name}</option>
+						{/each}
+					</select>
+				</div>
+			{/if}
 			<div class="field" style="margin-bottom: 0;">
 				<label class="field__label" for="dur">Длительность (мин)</label>
 				<select
@@ -507,7 +691,7 @@
 			<div class="field" style="margin-bottom: 0; min-width: 200px;">
 				<label class="field__label" for="cat">Тип встречи</label>
 				<select id="cat" bind:value={meetingCategory} style="width: 200px;">
-					<option value="">Определить автоматически</option>
+					<option value="">Автоматически</option>
 					{#each MEETING_CATEGORIES as c (c)}
 						<option value={c}>{c}</option>
 					{/each}
@@ -518,6 +702,35 @@
 			</Button>
 		</div>
 	</Card>
+
+	{#if crossMode && crossAllMembers.length > 0}
+		<div class="section" style="margin-top: 16px;">
+			<Card
+				title="Участники"
+				subtitle="Сними галочки с тех, кого не нужно звать. Дубли из пересекающихся команд убраны."
+			>
+				<div class="cross-members">
+					{#each crossAllMembers as { team_name, member } (member.employee_id)}
+						<label
+							class="cross-members__item"
+							class:cross-members__item--off={crossExcluded.has(member.employee_id)}
+						>
+							<input
+								type="checkbox"
+								checked={!crossExcluded.has(member.employee_id)}
+								onchange={() => toggleCrossEmp(member.employee_id)}
+							/>
+							<span class="cross-members__name">{member.full_name}</span>
+							<span class="cross-members__team">{team_name}</span>
+						</label>
+					{/each}
+				</div>
+				<div class="cross-members__total">
+					Итого участников: <strong>{crossFinalEmpIDs.length}</strong>
+				</div>
+			</Card>
+		</div>
+	{/if}
 
 	<div class="section" style="margin-top: 24px;">
 		{#if windows.length === 0 && !searching}
@@ -591,13 +804,8 @@
 									<div class="space-y-1">
 										{#each w.unavailable as p (p.employee_id)}
 											<div class="flex items-center gap-2 text-xs unavail-row">
-												<Badge variant={reasonVariant(p.reason)}>{reasonLabel(p.reason)}</Badge>
+												<Badge variant={reasonVariant(p.reason)}>{reasonLabel(p)}</Badge>
 												<span class="unavail-row__name">{p.full_name}</span>
-												{#if p.reason === 'outside_hours' && p.local_time}
-													<span class="unavail-row__tz" title={p.timezone ?? ''}>
-														у него {p.local_time}{#if p.work_hours}, график {p.work_hours}{/if}
-													</span>
-												{/if}
 												<a
 													href="/employees/{p.employee_id}"
 													class="text-text-3"
@@ -622,6 +830,102 @@
 {/if}
 
 <style>
+	/* --- Тоггл «Командная / Межкомандная» --- */
+	.mode-switch {
+		display: inline-flex;
+		gap: 2px;
+		padding: 3px;
+		margin-bottom: 12px;
+		background: var(--surface);
+		border-radius: 8px;
+	}
+	.mode-switch__btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 6px 14px;
+		font-size: 13px;
+		background: transparent;
+		border: none;
+		color: var(--text-2);
+		border-radius: 6px;
+		cursor: pointer;
+		font-family: inherit;
+	}
+	.mode-switch__btn:hover {
+		color: var(--text);
+	}
+	.mode-switch__btn--active {
+		background: var(--bg, white);
+		color: var(--text);
+		font-weight: 600;
+		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+	}
+
+	/* --- Multi-select команд для межкомандной встречи --- */
+	.cross-teams {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 8px 16px;
+		padding: 8px 12px;
+		border: 0.5px solid var(--border);
+		border-radius: 8px;
+		background: var(--surface);
+	}
+	.cross-teams__item {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		cursor: pointer;
+		font-size: 13px;
+		color: var(--text);
+	}
+
+	/* --- Список участников межкомандной встречи --- */
+	.cross-members {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+		gap: 4px;
+	}
+	.cross-members__item {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 6px 8px;
+		border-radius: 6px;
+		cursor: pointer;
+		transition: background 0.12s, opacity 0.12s;
+	}
+	.cross-members__item:hover {
+		background: var(--surface);
+	}
+	.cross-members__item--off {
+		opacity: 0.4;
+	}
+	.cross-members__name {
+		font-size: 13px;
+		color: var(--text);
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.cross-members__team {
+		font-size: 11px;
+		color: var(--text-3);
+		padding: 1px 6px;
+		background: var(--surface);
+		border-radius: 4px;
+	}
+	.cross-members__total {
+		margin-top: 10px;
+		padding-top: 8px;
+		border-top: 0.5px solid var(--border);
+		font-size: 13px;
+		color: var(--text-2);
+	}
+
 	.my-meeting {
 		display: flex;
 		flex-direction: column;

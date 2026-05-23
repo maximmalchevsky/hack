@@ -244,15 +244,12 @@
 						</Button>
 					</div>
 
-					<div class="rec__footer">
-						{#if r.generated_by === 'ai'}
+					{#if r.generated_by === 'ai'}
+						<div class="rec__footer">
 							<i class="ti ti-sparkles"></i>
 							<span>Сгенерировано GigaChat</span>
-						{:else}
-							<i class="ti ti-template"></i>
-							<span>Текст по шаблону</span>
-						{/if}
-					</div>
+						</div>
+					{/if}
 				</div>
 			</Card>
 		{/each}

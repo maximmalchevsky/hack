@@ -47,6 +47,7 @@ func (h *IntegrationHandler) Mount(r fiber.Router) {
 	g.Get("/", h.list)
 	g.Post("/ical", h.connectICal)
 	g.Post("/caldav", h.connectCalDAV)
+	g.Post("/jira", h.connectJira)
 	g.Get("/oauth/yandex/connect", h.yandexConnect)
 	g.Post("/:id/sync", h.sync)
 	g.Delete("/:id", h.delete)
@@ -202,6 +203,34 @@ func (h *IntegrationHandler) connectICal(c fiber.Ctx) error {
 	})
 	if err != nil {
 		return err
+	}
+	if h.enqueuer != nil {
+		_ = h.enqueuer.EnqueueSyncBackfill(integ.ID)
+	}
+	return c.Status(fiber.StatusCreated).JSON(IntegrationToDTO(*integ))
+}
+
+func (h *IntegrationHandler) connectJira(c fiber.Ctx) error {
+	empID := middleware.EmployeeID(c)
+	if empID == uuid.Nil {
+		return fiber.NewError(fiber.StatusBadRequest, "no employee linked to user")
+	}
+	var req ConnectJiraRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+	integ, err := h.svc.ConnectJira(c.Context(), service.ConnectJiraInput{
+		EmployeeID: empID,
+		BaseURL:    req.BaseURL,
+		Email:      req.Email,
+		APIToken:   req.APIToken,
+		Label:      req.Label,
+	})
+	if err != nil {
+		if errors.Is(err, service.ErrIntegrationBadInput) {
+			return fiber.NewError(fiber.StatusBadRequest, "base_url/email/api_token required")
+		}
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 	if h.enqueuer != nil {
 		_ = h.enqueuer.EnqueueSyncBackfill(integ.ID)

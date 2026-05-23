@@ -86,7 +86,7 @@
 			}
 			if (state === 'conflict') {
 				// Различаем double-booking от события вне графика.
-				lines.push(eventsOverlap(det.events) ? '⚠️ две встречи одновременно' : '⚠️ вне рабочего графика');
+				lines.push(eventsOverlap(det.events) ? '⚠️ несколько встреч одновременно' : '⚠️ вне рабочего графика');
 			}
 			return lines.join('\n');
 		}

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -67,6 +68,19 @@ func (s *TeamService) ListVisible(ctx context.Context, role string, empID uuid.U
 		}
 	}
 	return out, rows.Err()
+}
+
+// ListAllForMeetings — все команды организации (для межкомандных встреч).
+// Доступ — у тех же ролей, что и стандартный propose-meeting (manager/pm/hr/admin).
+// employee и analyst отдельно сюда не пускаем — у них нет права создавать
+// встречи.
+func (s *TeamService) ListAllForMeetings(ctx context.Context, role string) ([]domain.Team, error) {
+	switch role {
+	case "admin", "hr", "pm", "manager":
+		return s.teams.List(ctx)
+	default:
+		return nil, ErrTeamForbidden
+	}
 }
 
 func (s *TeamService) ByID(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
@@ -495,6 +509,20 @@ func eventInExc(s, e time.Time, excs []domain.TimeException) bool {
 	return false
 }
 
+// firstActiveExceptionKind — возвращает kind первого подходящего exception
+// (vacation, sick_leave, business_trip, personal_hours, custom). Пустая строка
+// если ни один не совпадает — это значит, что вызывающая функция уже определила
+// «in_exception», но не нашла конкретный kind (что не должно случаться,
+// но защищаемся).
+func firstActiveExceptionKind(s, e time.Time, excs []domain.TimeException) string {
+	for _, ex := range excs {
+		if s.Before(ex.EndAt) && ex.StartAt.Before(e) {
+			return string(ex.Kind)
+		}
+	}
+	return ""
+}
+
 func overlapsAny(s, e time.Time, evs []domain.CalendarEvent) bool {
 	for _, ev := range evs {
 		if ev.IsExcluded || ev.Status == domain.EventCancelled {
@@ -520,9 +548,14 @@ type MeetingParticipant struct {
 	//   outside_hours    — слот вне рабочих часов профиля
 	//   no_profile       — у сотрудника нет активного work_profile
 	Reason string `json:"reason,omitempty"`
+	// ExceptionKind заполняется только когда Reason="in_exception":
+	//   vacation, sick_leave, business_trip, personal_hours, custom.
+	// Фронт показывает понятный текст «отпуск/больничный/командировка».
+	ExceptionKind string `json:"exception_kind,omitempty"`
 	// LocalTime — окно встречи В TZ участника (формат 15:04–15:04).
 	// Пример: для участника в Лиссабоне, если встреча 10:00–11:00 МСК,
-	// здесь будет "07:00–08:00". Важно для outside_hours-предупреждения.
+	// здесь будет "07:00–08:00". Полезно когда TZ участника отличается от TZ
+	// инициатора — для одинаковых TZ фронт это поле скрывает.
 	LocalTime string `json:"local_time,omitempty"`
 	// WorkHours — рабочие часы участника в этот день недели в его же TZ.
 	// Пример: "10:00–18:00". Пусто, если профиля нет.
@@ -548,6 +581,17 @@ type FindWindowsInput struct {
 	Days        int    // горизонт поиска в днях вперёд (по умолч. 7)
 	ViewerTZ    string // TZ для рендеринга и фильтрации
 	TopN        int    // сколько вернуть лучших окон (по умолч. 3)
+}
+
+// FindCrossWindowsInput — параметры поиска окон для произвольного списка
+// сотрудников (межкомандная встреча). Используется когда участники не из одной
+// команды.
+type FindCrossWindowsInput struct {
+	EmployeeIDs []uuid.UUID
+	DurationMin int
+	Days        int
+	ViewerTZ    string
+	TopN        int
 }
 
 type candidateWindow struct {
@@ -606,23 +650,131 @@ func (s *TeamService) FindWindows(ctx context.Context, in FindWindowsInput) ([]M
 
 	memberData := make([]memberCtx, 0, len(members))
 	for _, m := range members {
-		mc := memberCtx{empID: m.EmployeeID, name: m.FullName}
-		if wp, err := s.profiles.Active(ctx, m.EmployeeID); err == nil {
-			mc.profile = wp
-		}
-		mc.events, _ = s.events.List(ctx, repository.ListEventsFilter{
-			EmployeeID: m.EmployeeID,
-			From:       now,
-			To:         end,
-		})
-		mc.excs, _ = s.excs.List(ctx, repository.ListExceptionsFilter{
-			EmployeeID: m.EmployeeID,
-			From:       now,
-			To:         end,
-		})
-		memberData = append(memberData, mc)
+		memberData = append(memberData, s.buildMemberCtx(ctx, m.EmployeeID, m.FullName, now, end))
 	}
 
+	return s.findWindowsCore(memberData, now, end, duration, in.TopN), nil
+}
+
+// FindWindowsForEmployees — поиск окон для произвольного списка employee_ids.
+// Используется при создании межкомандных встреч. Дедуплицирует список и
+// сохраняет порядок участников такой же как пришёл. Запрос имён сотрудников —
+// один SQL.
+func (s *TeamService) FindWindowsForEmployees(ctx context.Context, in FindCrossWindowsInput) ([]MeetingWindow, error) {
+	if in.DurationMin <= 0 {
+		in.DurationMin = 60
+	}
+	if in.Days <= 0 {
+		in.Days = 7
+	}
+	if in.TopN <= 0 {
+		in.TopN = 3
+	}
+	if in.ViewerTZ == "" {
+		in.ViewerTZ = "Europe/Moscow"
+	}
+	loc, _ := time.LoadLocation(in.ViewerTZ)
+	if loc == nil {
+		loc = time.UTC
+	}
+
+	// Дедупликация empIDs (могут прийти дубликаты при выборе пересекающихся команд).
+	uniq := make(map[uuid.UUID]struct{}, len(in.EmployeeIDs))
+	empIDs := make([]uuid.UUID, 0, len(in.EmployeeIDs))
+	for _, id := range in.EmployeeIDs {
+		if id == uuid.Nil {
+			continue
+		}
+		if _, ok := uniq[id]; ok {
+			continue
+		}
+		uniq[id] = struct{}{}
+		empIDs = append(empIDs, id)
+	}
+	if len(empIDs) == 0 {
+		return nil, nil
+	}
+
+	// Резолвим имена одним запросом, иначе будет N+1.
+	names, err := s.resolveEmployeeNames(ctx, empIDs)
+	if err != nil {
+		return nil, fmt.Errorf("resolve names: %w", err)
+	}
+
+	now := time.Now().In(loc).Add(time.Hour)
+	end := now.AddDate(0, 0, in.Days)
+	duration := time.Duration(in.DurationMin) * time.Minute
+
+	memberData := make([]memberCtx, 0, len(empIDs))
+	for _, id := range empIDs {
+		nm := names[id]
+		if nm == "" {
+			nm = id.String()
+		}
+		memberData = append(memberData, s.buildMemberCtx(ctx, id, nm, now, end))
+	}
+
+	return s.findWindowsCore(memberData, now, end, duration, in.TopN), nil
+}
+
+// buildMemberCtx — собирает профиль/события/исключения сотрудника в memberCtx.
+// Используется обоими find-windows вариантами (team + employees).
+func (s *TeamService) buildMemberCtx(ctx context.Context, empID uuid.UUID, name string, from, to time.Time) memberCtx {
+	mc := memberCtx{empID: empID, name: name}
+	if wp, err := s.profiles.Active(ctx, empID); err == nil {
+		mc.profile = wp
+	}
+	mc.events, _ = s.events.List(ctx, repository.ListEventsFilter{
+		EmployeeID: empID,
+		From:       from,
+		To:         to,
+	})
+	mc.excs, _ = s.excs.List(ctx, repository.ListExceptionsFilter{
+		EmployeeID: empID,
+		From:       from,
+		To:         to,
+	})
+	return mc
+}
+
+// resolveEmployeeNames — один SQL для пачки empIDs → map[id]→full_name.
+func (s *TeamService) resolveEmployeeNames(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	out := make(map[uuid.UUID]string, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT e.id, COALESCE(u.full_name, '')
+		FROM employees e
+		JOIN users u ON u.id = e.user_id
+		WHERE e.id = ANY($1)
+	`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		var name string
+		if err := rows.Scan(&id, &name); err == nil {
+			out[id] = name
+		}
+	}
+	return out, rows.Err()
+}
+
+// findWindowsCore — общий core-алгоритм поиска окон. Принимает уже подготовленный
+// список memberCtx + параметры. Возвращает топ-N MeetingWindow.
+//
+// Вынесено в общий метод, чтобы FindWindows (по команде) и FindWindowsForEmployees
+// (по произвольному списку) использовали одинаковую логику candidate-генерации
+// и сортировки.
+func (s *TeamService) findWindowsCore(
+	memberData []memberCtx,
+	now, end time.Time,
+	duration time.Duration,
+	topN int,
+) []MeetingWindow {
 	var candidates []candidateWindow
 	step := 30 * time.Minute
 	for t := alignTo30Min(now); !t.Add(duration).After(end); t = t.Add(step) {
@@ -645,13 +797,18 @@ func (s *TeamService) FindWindows(ctx context.Context, in FindWindowsInput) ([]M
 					Timezone:   tz,
 				})
 			} else {
+				excKind := ""
+				if reason == "in_exception" {
+					excKind = firstActiveExceptionKind(t, slotEnd, mc.excs)
+				}
 				unavail = append(unavail, MeetingParticipant{
-					EmployeeID: mc.empID.String(),
-					FullName:   mc.name,
-					Reason:     reason,
-					LocalTime:  localTime,
-					WorkHours:  workHours,
-					Timezone:   tz,
+					EmployeeID:    mc.empID.String(),
+					FullName:      mc.name,
+					Reason:        reason,
+					ExceptionKind: excKind,
+					LocalTime:     localTime,
+					WorkHours:     workHours,
+					Timezone:      tz,
 				})
 			}
 		}
@@ -668,17 +825,9 @@ func (s *TeamService) FindWindows(ctx context.Context, in FindWindowsInput) ([]M
 
 	sortCandidates(candidates)
 
-	// Разнообразим топ-N по дням: чтобы 7-дневный горизонт не схлопывался
-	// в три окна на один день. Алгоритм:
-	//  1) сначала идём по отсортированному списку и берём первое окно
-	//     каждого уникального дня (это «лучшее окно дня»);
-	//  2) если осталось место в топ-N — добиваем «вторыми по качеству»
-	//     этих же дней (тоже отсортированные).
-	//
-	// Сортировка ВНУТРИ дня сохранена: первым попадает с большей доступностью,
-	// при равенстве — более раннее по времени.
+	// Diversify по дням — тот же алгоритм что в FindWindows.
 	seenDays := map[string]struct{}{}
-	primary := make([]candidateWindow, 0, in.TopN)
+	primary := make([]candidateWindow, 0, topN)
 	overflow := make([]candidateWindow, 0, len(candidates))
 	for _, c := range candidates {
 		key := c.start.Format("2006-01-02")
@@ -690,14 +839,13 @@ func (s *TeamService) FindWindows(ctx context.Context, in FindWindowsInput) ([]M
 		}
 	}
 	candidates = append(primary, overflow...)
-	if len(candidates) > in.TopN {
-		candidates = candidates[:in.TopN]
+	if len(candidates) > topN {
+		candidates = candidates[:topN]
 	}
 
-	total := len(members)
+	total := len(memberData)
 	out := make([]MeetingWindow, 0, len(candidates))
 	for _, c := range candidates {
-		// nil-слайсы превращаем в пустые — фронту удобнее.
 		avail := c.available
 		if avail == nil {
 			avail = []MeetingParticipant{}
@@ -715,7 +863,7 @@ func (s *TeamService) FindWindows(ctx context.Context, in FindWindowsInput) ([]M
 			Unavailable:    unavail,
 		})
 	}
-	return out, nil
+	return out
 }
 
 // memberStatus — пустая строка если сотрудник свободен, иначе код причины:

@@ -32,9 +32,15 @@ type Enqueuer interface {
 }
 
 // Run — выполняет bootstrap-логику. Безопасно вызывать при каждом старте.
-// Если enq != nil, после успешного seed'а событий ставит каждому сотруднику
-// metrics:recompute + ai:recommend — чтобы рекомендации появились без ручного
-// нажатия «Обновить» на UI.
+// Если enq != nil, ставит каждому сотруднику metrics:recompute и (только при
+// первичном seed'е событий) ai:recommend.
+//
+// metrics:recompute дёргаем ВСЕГДА: metrics_snapshots должен быть тёплый сразу
+// после старта api, иначе /analytics показывает нули, пока не сработает первый
+// пересчёт (а он триггерится только изменениями профиля/событий/исключений).
+//
+// ai:recommend ставим только если события реально засеялись — иначе на каждый
+// рестарт будем дёргать GigaChat впустую.
 func Run(ctx context.Context, db *pgxpool.Pool, enq Enqueuer, log zerolog.Logger) error {
 	if err := ensureAdmin(ctx, db, log); err != nil {
 		return fmt.Errorf("bootstrap admin: %w", err)
@@ -49,16 +55,15 @@ func Run(ctx context.Context, db *pgxpool.Pool, enq Enqueuer, log zerolog.Logger
 	if err != nil {
 		return fmt.Errorf("bootstrap events: %w", err)
 	}
-	if enq != nil && created {
-		enqueueAllEmployees(ctx, db, enq, log)
+	if enq != nil {
+		enqueueAllEmployees(ctx, db, enq, log, created)
 	}
 	return nil
 }
 
-// enqueueAllEmployees — после первичного seed'а событий ставит каждому
-// сотруднику metrics:recompute и ai:recommend в очередь. Запускается ОДИН раз,
-// когда в этом запуске реально создавались события.
-func enqueueAllEmployees(ctx context.Context, db *pgxpool.Pool, enq Enqueuer, log zerolog.Logger) {
+// enqueueAllEmployees — ставит metrics:recompute всем сотрудникам всегда, а
+// ai:recommend — только если в этом запуске засеялись события.
+func enqueueAllEmployees(ctx context.Context, db *pgxpool.Pool, enq Enqueuer, log zerolog.Logger, withRecommend bool) {
 	rows, err := db.Query(ctx, `SELECT id FROM employees ORDER BY id`)
 	if err != nil {
 		log.Warn().Err(err).Msg("bootstrap: list employees for enqueue")
@@ -72,10 +77,13 @@ func enqueueAllEmployees(ctx context.Context, db *pgxpool.Pool, enq Enqueuer, lo
 			continue
 		}
 		_ = enq.EnqueueMetricsRecompute(empID)
-		_ = enq.EnqueueAIRecommend(empID)
+		if withRecommend {
+			_ = enq.EnqueueAIRecommend(empID)
+		}
 		queued++
 	}
-	log.Info().Int("employees", queued).Msg("bootstrap: enqueued metrics+recommend for all")
+	log.Info().Int("employees", queued).Bool("with_recommend", withRecommend).
+		Msg("bootstrap: enqueued metrics recompute for all")
 }
 
 const adminEmail = "admin@worktime.local"

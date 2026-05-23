@@ -214,11 +214,6 @@
 									</div>
 								{/if}
 							</div>
-							<div class="text-right" style="font-size: 12px; color: var(--text-2);">
-								<div>L<sub>−1н</sub>: <strong>{b.l1.toFixed(2)}</strong></div>
-								<div>L<sub>тек</sub>: <strong>{b.l2.toFixed(2)}</strong></div>
-								<div>C<sub>тек</sub>: <strong>{b.c2.toFixed(2)}</strong></div>
-							</div>
 						</div>
 					</Card>
 				{/each}

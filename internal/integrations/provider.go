@@ -48,13 +48,16 @@ type Event struct {
 
 // Task — нормализованная задача из таск-трекера.
 type Task struct {
-	SourceID        string
-	Title           string
-	Status          string
-	DueAt           *time.Time
-	EstimatedHours  *float64
-	ActualHours     *float64
-	Raw             map[string]any
+	SourceID       string
+	Title          string
+	Description    string // multi-line, может быть пустым; используется AI для оценки
+	Status         string
+	Priority       string // Highest / High / Medium / Low / Lowest (для Jira)
+	Type           string // Story / Task / Bug / Epic / Subtask
+	DueAt          *time.Time
+	EstimatedHours *float64
+	ActualHours    *float64
+	Raw            map[string]any
 }
 
 // WebhookEvent — событие, пришедшее в /webhooks/{provider}.

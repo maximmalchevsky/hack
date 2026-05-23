@@ -6,6 +6,7 @@
 	import EChart from '$lib/components/EChart.svelte';
 	import Tabs from '$lib/components/Tabs.svelte';
 	import { user } from '$lib/stores/user';
+	import Button from '$lib/components/Button.svelte';
 	import {
 		// Company
 		getOverview,
@@ -40,7 +41,8 @@
 		type MeTrendPoint,
 		type MeHoursWeek,
 		type TeamRef,
-		type TeamScopeOverview
+		type TeamScopeOverview,
+		recomputeAllMetrics
 	} from '$lib/api/analytics';
 	import { ApiError } from '$lib/api/client';
 	import ViewPresetsBar from '$lib/components/ViewPresetsBar.svelte';
@@ -81,6 +83,26 @@
 	let teamsLoading = $state(false);
 	let teamsLoaded = $state(false);
 	let teamsError = $state<string | null>(null);
+
+	// --- Состояние «Пересчёт метрик» (только admin/hr) ---
+	let recomputing = $state(false);
+	let recomputeMsg = $state<string | null>(null);
+	const canRecompute = $derived(role === 'admin' || role === 'hr');
+
+	async function recomputeAll() {
+		if (recomputing) return;
+		recomputing = true;
+		recomputeMsg = null;
+		try {
+			const r = await recomputeAllMetrics();
+			recomputeMsg = `Пересчёт запущен для ${r.queued} из ${r.total}. Цифры обновятся через 10–30 сек.`;
+		} catch (e) {
+			recomputeMsg = e instanceof ApiError ? e.message : String(e);
+		} finally {
+			recomputing = false;
+			setTimeout(() => (recomputeMsg = null), 8000);
+		}
+	}
 
 	// --- Состояние «Компания» ---
 	let companyOv = $state<OverviewKPI | null>(null);
@@ -584,7 +606,19 @@
 			{/if}
 		</div>
 	</div>
-	<div>
+	<div class="page-header__actions">
+		{#if canRecompute}
+			<Button
+				variant="ghost"
+				size="sm"
+				icon={recomputing ? 'ti-loader' : 'ti-refresh'}
+				onclick={recomputeAll}
+				disabled={recomputing}
+				title="Пересчитать A/C/L/R по всем сотрудникам — если показатели нулевые или устарели"
+			>
+				{recomputing ? 'Пересчитываем…' : 'Пересчитать метрики'}
+			</Button>
+		{/if}
 		<ViewPresetsBar
 			page="analytics"
 			currentFilters={() => ({ tab: activeTab, team_id: selectedTeamId })}
@@ -597,6 +631,15 @@
 		/>
 	</div>
 </div>
+
+{#if recomputeMsg}
+	<div class="section">
+		<Badge variant={recomputing ? 'info' : 'success'}>
+			<i class="ti ti-info-circle"></i>
+			{recomputeMsg}
+		</Badge>
+	</div>
+{/if}
 
 {#if initialized && visibleTabs.length > 1}
 	<div class="section">

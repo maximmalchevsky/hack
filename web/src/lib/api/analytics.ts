@@ -159,3 +159,8 @@ export const getTeamsGroupsDistribution = (teamId?: string) =>
 	api.get<{ groups: GroupSlice[] }>(
 		`/api/v1/analytics/teams/groups-distribution${scopeQuery(teamId)}`
 	);
+
+// recomputeAllMetrics — admin: пересчитать метрики всем сотрудникам.
+// Возвращает {queued, total}.
+export const recomputeAllMetrics = () =>
+	api.post<{ queued: number; total: number }>('/api/v1/admin/metrics/recompute-all', {});

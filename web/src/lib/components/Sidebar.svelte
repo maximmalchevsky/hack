@@ -96,6 +96,13 @@
 					roles: ['employee', 'manager', 'pm', 'hr', 'analyst', 'admin']
 				},
 				{
+					page: 'tasks',
+					href: '/tasks',
+					label: 'Задачи',
+					icon: 'ti-checkbox',
+					roles: ['employee', 'manager', 'pm', 'hr', 'analyst', 'admin']
+				},
+				{
 					page: 'teams',
 					href: '/teams',
 					label: 'Команды',

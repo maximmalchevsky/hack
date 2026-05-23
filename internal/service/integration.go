@@ -14,6 +14,7 @@ import (
 	"worktimesync/internal/integrations"
 	"worktimesync/internal/integrations/caldav"
 	"worktimesync/internal/integrations/ical"
+	"worktimesync/internal/integrations/jira"
 	"worktimesync/internal/repository"
 	"worktimesync/pkg/crypto"
 )
@@ -179,6 +180,59 @@ func (s *IntegrationService) ConnectYandexCalendar(ctx context.Context, in Conne
 		RefreshTokenEnc: refEnc,
 		ExpiresAt:       expPtr,
 		ConfigJSON:      cfg,
+	})
+}
+
+// ConnectJiraInput — параметры подключения Jira Cloud по API token.
+//
+// Проверяем креды через GET /myself перед сохранением — иначе пользователь
+// получит ошибку только при первом sync, что неудобно.
+type ConnectJiraInput struct {
+	EmployeeID uuid.UUID
+	BaseURL    string // https://yourorg.atlassian.net
+	Email      string
+	APIToken   string
+	Label      string
+}
+
+func (s *IntegrationService) ConnectJira(ctx context.Context, in ConnectJiraInput) (*domain.Integration, error) {
+	if in.BaseURL == "" || in.Email == "" || in.APIToken == "" {
+		return nil, ErrIntegrationBadInput
+	}
+
+	payload, _ := json.Marshal(jira.AuthPayload{
+		BaseURL:  in.BaseURL,
+		Email:    in.Email,
+		APIToken: in.APIToken,
+	})
+
+	prov := jira.New()
+	if _, err := prov.Authenticate(ctx, string(payload)); err != nil {
+		return nil, fmt.Errorf("jira authenticate: %w", err)
+	}
+
+	enc, err := s.cipher.Encrypt(string(payload))
+	if err != nil {
+		return nil, fmt.Errorf("encrypt: %w", err)
+	}
+
+	cfg, _ := json.Marshal(map[string]any{
+		"base_url": in.BaseURL,
+		"email":    in.Email,
+	})
+
+	label := in.Label
+	if label == "" {
+		label = "Jira"
+	}
+
+	return s.repo.Create(ctx, repository.CreateIntegrationInput{
+		EmployeeID:     in.EmployeeID,
+		Provider:       domain.IntegrationJira,
+		AccountEmail:   in.Email,
+		AccountLabel:   label,
+		AccessTokenEnc: enc,
+		ConfigJSON:     cfg,
 	})
 }
 

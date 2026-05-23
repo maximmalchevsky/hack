@@ -6,7 +6,8 @@ export type IntegrationProvider =
 	| 'google_calendar'
 	| 'ms365'
 	| 'jira'
-	| 'yandex_tracker';
+	| 'yandex_tracker'
+	| 'yandex_calendar';
 
 export type IntegrationStatus = 'connected' | 'error' | 'disabled' | 'pending';
 
@@ -35,6 +36,13 @@ export const connectCalDAV = (body: {
 	cal_path?: string;
 	label?: string;
 }) => api.post<Integration>('/api/v1/integrations/caldav', body);
+
+export const connectJira = (body: {
+	base_url: string;
+	email: string;
+	api_token: string;
+	label?: string;
+}) => api.post<Integration>('/api/v1/integrations/jira', body);
 
 export const triggerSync = (id: string) =>
 	api.post<{ queued: boolean }>(`/api/v1/integrations/${id}/sync`);

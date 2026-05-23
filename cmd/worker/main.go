@@ -16,6 +16,7 @@ import (
 	"worktimesync/internal/ai"
 	"worktimesync/internal/analytics"
 	"worktimesync/internal/config"
+	"worktimesync/internal/integrations/imip"
 	"worktimesync/internal/integrations/yandex"
 	"worktimesync/internal/notifier"
 	"worktimesync/internal/notify"
@@ -138,6 +139,8 @@ func main() {
 	recommendationSvc := service.NewRecommendationService(db, recommender, weights, metricsCache)
 	teamDigestSvc := service.NewTeamWeeklyDigestService(db, llm)
 	meetingPrepSvc := service.NewMeetingPrepService(db, llm)
+	taskEstimator := ai.NewTaskEstimator(llm)
+	taskPlannerSvc := service.NewTaskPlannerService(db, taskEstimator)
 
 	// --- Asynq ---
 	asynqRedis := asynq.RedisClientOpt{
@@ -171,6 +174,7 @@ func main() {
 		Notifications:   notificationSvc,
 		TeamDigest:      teamDigestSvc,
 		MeetingPrep:     meetingPrepSvc,
+		TaskPlanner:     taskPlannerSvc,
 	})
 	h.Register(mux)
 
@@ -181,6 +185,22 @@ func main() {
 	} else if tgBot != nil {
 		tgBot.WithPulse(pulseSvc)
 		go tgBot.Run(ctx)
+	}
+
+	// iMIP IMAP-poller. Если IMIP_ENABLED=false или IMAP-креды пустые — не стартуем.
+	if cfg.IMIP.Enabled && cfg.IMIP.IMAPHost != "" && cfg.IMIP.IMAPUser != "" {
+		poller := imip.NewPoller(imip.PollerConfig{
+			Host:         cfg.IMIP.IMAPHost,
+			Port:         cfg.IMIP.IMAPPort,
+			User:         cfg.IMIP.IMAPUser,
+			Pass:         cfg.IMIP.IMAPPass,
+			Mailbox:      cfg.IMIP.IMAPMailbox,
+			PollInterval: cfg.IMIP.PollInterval,
+		}, db, log)
+		go poller.Run(ctx)
+	} else {
+		log.Info().Bool("enabled", cfg.IMIP.Enabled).Str("host", cfg.IMIP.IMAPHost).
+			Msg("imip imap poller not configured, skipping")
 	}
 
 	errCh := make(chan error, 1)

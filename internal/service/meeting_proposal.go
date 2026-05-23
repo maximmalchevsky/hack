@@ -13,7 +13,9 @@ import (
 
 	"worktimesync/internal/domain"
 	"worktimesync/internal/integrations"
+	"worktimesync/internal/integrations/imip"
 	"worktimesync/internal/integrations/yandex"
+	"worktimesync/internal/notify"
 	"worktimesync/internal/repository"
 	"worktimesync/pkg/crypto"
 )
@@ -30,7 +32,10 @@ type MeetingProposalService struct {
 	events        *repository.CalendarEventRepo
 	notifications *NotificationService
 	cipher        *crypto.Cipher
-	yandex        *yandex.Provider // nil если OAuth Яндекса не настроен
+	yandex        *yandex.Provider          // nil если OAuth Яндекса не настроен
+	email         *notify.EmailTransport    // nil если SMTP не настроен
+	imipReplyTo   string                    // тех. ящик для iMIP. Пусто = инвайты не шлём.
+	imipEnabled   bool
 }
 
 func NewMeetingProposalService(pool *pgxpool.Pool, notif *NotificationService) *MeetingProposalService {
@@ -52,6 +57,114 @@ func (s *MeetingProposalService) WithYandex(p *yandex.Provider, cipher *crypto.C
 	return s
 }
 
+// WithIMIP — DI: подключаем SMTP-транспорт для рассылки .ics-инвайтов.
+// Если enabled=false или replyTo пустой — инвайты не шлём.
+func (s *MeetingProposalService) WithIMIP(email *notify.EmailTransport, replyTo string, enabled bool) *MeetingProposalService {
+	s.email = email
+	s.imipReplyTo = strings.TrimSpace(replyTo)
+	s.imipEnabled = enabled && s.imipReplyTo != "" && email != nil && email.Enabled()
+	return s
+}
+
+// sendIMIPInvites — отправляет .ics-инвайт каждому участнику с email'ом.
+// Best-effort: ошибки логируются, но не валят основной flow Propose().
+//
+// Не отправляет инициатору — он и так увидит встречу в «Мои встречи» в UI.
+// Если хочется чтобы инициатор тоже получил инвайт у себя в Gmail — добавим
+// его в attendees отдельно.
+func (s *MeetingProposalService) sendIMIPInvites(
+	ctx context.Context,
+	meetingID uuid.UUID,
+	title, description string,
+	startAt, endAt time.Time,
+	initiatorEmp uuid.UUID,
+	initiatorName string,
+	teamMembers []domain.TeamMemberDetailed,
+) {
+	if !s.imipEnabled || s.email == nil {
+		return
+	}
+
+	// Собираем emails+ФИО участников (кроме инициатора). Один запрос вместо N.
+	type recipient struct {
+		empID    uuid.UUID
+		userID   uuid.UUID
+		email    string
+		fullName string
+	}
+	var memberEmpIDs []uuid.UUID
+	for _, m := range teamMembers {
+		if m.EmployeeID == initiatorEmp {
+			continue
+		}
+		memberEmpIDs = append(memberEmpIDs, m.EmployeeID)
+	}
+	if len(memberEmpIDs) == 0 {
+		return
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT e.id, u.id, COALESCE(u.email, ''), COALESCE(u.full_name, '')
+		FROM employees e
+		JOIN users u ON u.id = e.user_id
+		WHERE e.id = ANY($1) AND u.email <> ''
+	`, memberEmpIDs)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	var recipients []recipient
+	for rows.Next() {
+		var r recipient
+		if err := rows.Scan(&r.empID, &r.userID, &r.email, &r.fullName); err != nil {
+			continue
+		}
+		recipients = append(recipients, r)
+	}
+	if len(recipients) == 0 {
+		return
+	}
+
+	// Готовим Attendees для .ics — каждый получатель попадает сюда, чтобы
+	// клиент календаря показал всех участников как «invited».
+	attendees := make([]imip.Attendee, 0, len(recipients))
+	for _, r := range recipients {
+		attendees = append(attendees, imip.Attendee{Email: r.email, Name: r.fullName})
+	}
+
+	icsBody := imip.BuildInvitation(imip.Invitation{
+		MeetingID:      meetingID,
+		Title:          title,
+		Description:    description,
+		StartAt:        startAt,
+		EndAt:          endAt,
+		OrganizerEmail: s.imipReplyTo,
+		OrganizerName:  initiatorName,
+		Attendees:      attendees,
+		Sequence:       0,
+		Method:         "REQUEST",
+	})
+
+	// Plain-текст для тех клиентов, что не понимают .ics.
+	plain := fmt.Sprintf(
+		"%s\n\nВремя: %s — %s UTC\nИнициатор: %s\n\nЭто календарный инвайт. Нажми «Принять» в своём клиенте почты, "+
+			"и событие добавится в твой календарь.",
+		title,
+		startAt.Format("02.01.2006 15:04"),
+		endAt.Format("15:04"),
+		initiatorName,
+	)
+
+	subj := title
+	for _, r := range recipients {
+		if err := s.email.SendCalendarInvite(ctx, r.email, subj, plain, icsBody, s.imipReplyTo, initiatorName); err != nil {
+			// Лог через notifications-канал не делаем — best-effort, движемся дальше.
+			continue
+		}
+	}
+}
+
 type ProposeMeetingInput struct {
 	TeamID        uuid.UUID
 	StartAt       time.Time
@@ -62,6 +175,11 @@ type ProposeMeetingInput struct {
 	// Category — опционально, выбирает пользователь в форме создания встречи.
 	// Пустая = «определить автоматически» (GigaChat при подсчёте «куда уходит время»).
 	Category string
+	// InviteeEmpIDs — явный список приглашённых для межкомандных встреч.
+	// Если задан — используем его вместо team.Members. TeamID при этом может
+	// быть Nil (тогда встреча не привязана к команде) либо ссылаться на любую
+	// «основную» команду для отображения.
+	InviteeEmpIDs []uuid.UUID
 }
 
 type ProposeMeetingResult struct {
@@ -74,23 +192,57 @@ type ProposeMeetingResult struct {
 	YandexPushed   int       `json:"yandex_pushed"`              // сколько Яндекс-календарей всего получили событие (включая инициатора)
 }
 
-var ErrMeetingInvalidRange = errors.New("meeting: end_at must be after start_at")
+var (
+	ErrMeetingInvalidRange    = errors.New("meeting: end_at must be after start_at")
+	ErrMeetingNoParticipants  = errors.New("meeting: no participants — set team_id or invitee_emp_ids")
+)
 
-// Propose — для каждого участника команды + инициатора пушит уведомление.
-// Уже состоящий в команде инициатор не получает дубликат.
+// Propose — для каждого участника команды/списка приглашённых + инициатора
+// пушит уведомление. Поддерживает два режима:
+//
+//   - Командный: задан TeamID, InviteeEmpIDs пустой. Берём всех members
+//     команды (текущее поведение).
+//   - Межкомандный: задан InviteeEmpIDs. TeamID опционален — если задан,
+//     используется только как «основная» команда для отображения.
+//
+// Уже состоящий в списке инициатор не получает дубликат.
 func (s *MeetingProposalService) Propose(ctx context.Context, in ProposeMeetingInput) (*ProposeMeetingResult, error) {
 	if !in.EndAt.After(in.StartAt) {
 		return nil, ErrMeetingInvalidRange
 	}
-
-	team, err := s.teams.ByID(ctx, in.TeamID)
-	if err != nil {
-		return nil, fmt.Errorf("team: %w", err)
+	if in.TeamID == uuid.Nil && len(in.InviteeEmpIDs) == 0 {
+		return nil, ErrMeetingNoParticipants
 	}
 
-	members, err := s.teams.Members(ctx, in.TeamID)
-	if err != nil {
-		return nil, err
+	// Определяем имя «команды» для display и список members.
+	var (
+		teamName string
+		members  []domain.TeamMemberDetailed
+		err      error
+	)
+	if in.TeamID != uuid.Nil {
+		t, terr := s.teams.ByID(ctx, in.TeamID)
+		if terr != nil {
+			return nil, fmt.Errorf("team: %w", terr)
+		}
+		teamName = t.Name
+	}
+
+	if len(in.InviteeEmpIDs) > 0 {
+		// Межкомандный режим — берём явный список emp_id.
+		members, err = s.expandInvitees(ctx, in.InviteeEmpIDs)
+		if err != nil {
+			return nil, fmt.Errorf("expand invitees: %w", err)
+		}
+		if teamName == "" {
+			teamName = "Несколько команд"
+		}
+	} else {
+		// Командный — старый путь.
+		members, err = s.teams.Members(ctx, in.TeamID)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Имя инициатора — для красивого body.
@@ -101,7 +253,7 @@ func (s *MeetingProposalService) Propose(ctx context.Context, in ProposeMeetingI
 
 	title := in.Title
 	if title == "" {
-		title = "Встреча команды «" + team.Name + "»"
+		title = "Встреча команды «" + teamName + "»"
 	}
 
 	body := formatMeetingBody(in.StartAt, in.EndAt, initiatorName)
@@ -136,11 +288,11 @@ func (s *MeetingProposalService) Propose(ctx context.Context, in ProposeMeetingI
 			Body:   body,
 			Link:   "/team-map",
 			Payload: map[string]any{
-				"team_id":       in.TeamID.String(),
-				"team_name":     team.Name,
-				"start_at":      in.StartAt,
-				"end_at":        in.EndAt,
-				"initiator_id":  in.InitiatorUser.String(),
+				"team_id":      nullableUUID(in.TeamID),
+				"team_name":    teamName,
+				"start_at":     in.StartAt,
+				"end_at":       in.EndAt,
+				"initiator_id": in.InitiatorUser.String(),
 			},
 		})
 		if err != nil {
@@ -170,7 +322,7 @@ func (s *MeetingProposalService) Propose(ctx context.Context, in ProposeMeetingI
 	res := &ProposeMeetingResult{
 		MeetingID: meetingID,
 		Sent:      sent,
-		TeamName:  team.Name,
+		TeamName:  teamName,
 		StartAt:   in.StartAt,
 		EndAt:     in.EndAt,
 	}
@@ -205,7 +357,7 @@ func (s *MeetingProposalService) Propose(ctx context.Context, in ProposeMeetingI
 	// Yandex push — ТОЛЬКО инициатору сразу. Остальные участники получат
 	// событие в свой Яндекс при accept (опционально, по чекбоксу).
 	if in.InitiatorEmp != uuid.Nil {
-		pushed := s.pushYandexForEmployee(ctx, meetingID, in.InitiatorEmp, in, team.Name, initiatorName, category)
+		pushed := s.pushYandexForEmployee(ctx, meetingID, in.InitiatorEmp, in, teamName, initiatorName, category)
 		if pushed != nil {
 			res.YandexPushed++
 			res.YandexEventUID = pushed.UID
@@ -217,6 +369,16 @@ func (s *MeetingProposalService) Propose(ctx context.Context, in ProposeMeetingI
 		}
 	}
 
+	// iMIP-инвайт всем участникам с email'ом. Best-effort: если SMTP/IMIP
+	// не настроены — функция тихо выходит. Это идёт ОТДЕЛЬНО от notifications.Push,
+	// которая шлёт обычное текстовое уведомление: получатель видит два письма —
+	// текстовое и календарный инвайт с кнопкой Accept.
+	s.sendIMIPInvites(ctx, meetingID, title,
+		fmt.Sprintf("Команда: %s. Инициатор: %s.", teamName, initiatorName),
+		in.StartAt, in.EndAt,
+		in.InitiatorEmp, initiatorName, members,
+	)
+
 	return res, nil
 }
 
@@ -227,6 +389,53 @@ func nullableUUID(id uuid.UUID) any {
 		return nil
 	}
 	return id
+}
+
+// expandInvitees — превращает явный список emp_id в []TeamMemberDetailed.
+// Один SQL запрос, дедупликация, защита от uuid.Nil. Если какой-то emp не найден
+// (удалён, например) — просто пропускаем, не валим всю операцию.
+func (s *MeetingProposalService) expandInvitees(ctx context.Context, ids []uuid.UUID) ([]domain.TeamMemberDetailed, error) {
+	uniq := make(map[uuid.UUID]struct{}, len(ids))
+	cleaned := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if id == uuid.Nil {
+			continue
+		}
+		if _, ok := uniq[id]; ok {
+			continue
+		}
+		uniq[id] = struct{}{}
+		cleaned = append(cleaned, id)
+	}
+	if len(cleaned) == 0 {
+		return nil, nil
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT e.id, COALESCE(u.full_name, ''),
+		       COALESCE(u.role::text, ''),
+		       COALESCE(e.department, ''),
+		       COALESCE(u.timezone, ''),
+		       e.hr_work_format
+		FROM employees e
+		JOIN users u ON u.id = e.user_id
+		WHERE e.id = ANY($1)
+	`, cleaned)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]domain.TeamMemberDetailed, 0, len(cleaned))
+	for rows.Next() {
+		var m domain.TeamMemberDetailed
+		if err := rows.Scan(&m.EmployeeID, &m.FullName, &m.Role,
+			&m.Department, &m.Timezone, &m.WorkFormat); err != nil {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 // validateProposalCategory — если пользователь прислал не из канонического
