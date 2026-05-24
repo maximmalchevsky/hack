@@ -141,7 +141,8 @@ func (s *Server) registerRoutes() {
 	notificationSvc := service.NewNotificationService(s.db, s.redis).
 		WithTransports(emailTransport, telegramTransport)
 	meetingProposalSvc := service.NewMeetingProposalService(s.db, notificationSvc).
-		WithIMIP(emailTransport, s.cfg.IMIP.ReplyTo, s.cfg.IMIP.Enabled)
+		WithIMIP(emailTransport, s.cfg.IMIP.ReplyTo, s.cfg.IMIP.Enabled).
+		WithReplanEnqueuer(s.enqueuer)
 	conflictsSvc := service.NewConflictsService(s.db)
 	exportSvc := service.NewExportService(s.db, diagnosticsSvc, conflictsSvc)
 	reportPresetSvc := service.NewReportPresetService(s.db)

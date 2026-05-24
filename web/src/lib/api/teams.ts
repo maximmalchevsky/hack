@@ -17,12 +17,15 @@ export interface TeamMember {
 	last_profile_update_at?: string;
 }
 
-export type CellState = 'free' | 'busy' | 'conflict' | 'off';
+export type CellState = 'free' | 'busy' | 'conflict' | 'off' | 'focus' | 'task';
 
 export interface CellEventRef {
 	title: string;
 	start_at: string;
 	end_at: string;
+	// Категория (Ревью / Стендапы / Задача / Фокус-время / …).
+	// Фронт по ней различает task-блоки от обычных встреч в tooltip'е.
+	category?: string;
 }
 
 export interface CellExceptionRef {
@@ -76,6 +79,8 @@ export type ExceptionKind =
 	| 'personal_hours'
 	| 'custom';
 
+export type BusyKind = 'meeting' | 'task' | 'focus';
+
 export interface MeetingParticipant {
 	employee_id: string;
 	full_name: string;
@@ -83,6 +88,10 @@ export interface MeetingParticipant {
 	// Заполнено только когда reason='in_exception'. Используется для текста
 	// конкретного типа отсутствия: «отпуск», «больничный», «командировка».
 	exception_kind?: ExceptionKind;
+	// Заполнено только когда reason='busy'. Различаем встречу и задачу.
+	busy_kind?: BusyKind;
+	// Заголовок события / задачи, занимающего слот (для пометки «занят X»).
+	busy_title?: string;
 	// Локальное окно встречи в TZ участника, например "07:00–08:00".
 	local_time?: string;
 	// Рабочие часы участника в этот день недели в его TZ, например "10:00–18:00".

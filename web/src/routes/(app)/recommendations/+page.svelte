@@ -114,9 +114,23 @@
 	// разобраться с рекомендацией. Параллельно помечаем её «applied» на бэке,
 	// чтобы в следующий раз не показывать.
 	async function doIt(r: Recommendation) {
+		// Для task_overload: если в payload есть jira_link — открываем
+		// его в новой вкладке. Это конкретный actionable шаг.
+		const jiraLink = (r.payload as Record<string, unknown> | undefined)?.jira_link as
+			| string
+			| undefined;
+		if (r.kind === 'task_overload' && jiraLink) {
+			try {
+				await applyRecommendation(r.id);
+			} catch {
+				// ok
+			}
+			window.open(jiraLink, '_blank', 'noopener');
+			return;
+		}
+
 		const target = targetPathFor(r.kind);
 		try {
-			// fire-and-forget — не блокируем переход
 			await applyRecommendation(r.id);
 		} catch {
 			// если не сразу — не страшно, пользователь уже идёт делать
@@ -136,6 +150,7 @@
 				return '/scheduler';
 			case 'reduce_load':
 			case 'no_new_meetings':
+			case 'task_overload':
 				return '/workload';
 			default:
 				return '/diagnostics';
@@ -232,6 +247,25 @@
 						{r.explanation}
 					</div>
 
+					{#if r.kind === 'task_overload' && (r.payload as Record<string, unknown> | undefined)?.task_key}
+						{@const p = r.payload as Record<string, unknown>}
+						<div class="rec-jira">
+							<i class="ti ti-checkbox" style="color: #0052cc;"></i>
+							<span class="rec-jira__key">{p.task_key}</span>
+							{#if p.task_title}<span class="rec-jira__title">{p.task_title}</span>{/if}
+							{#if p.jira_link}
+								<a
+									href={p.jira_link as string}
+									target="_blank"
+									rel="noopener"
+									class="rec-jira__link"
+								>
+									Открыть в Jira →
+								</a>
+							{/if}
+						</div>
+					{/if}
+
 					<div class="rec__actions">
 						<Button size="sm" variant="primary" icon="ti-arrow-right" onclick={() => doIt(r)}>
 							Сделать
@@ -257,6 +291,47 @@
 {/if}
 
 <style>
+	/* --- Блок Jira-задачи в рекомендации task_overload --- */
+	.rec-jira {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 12px;
+		margin-bottom: 12px;
+		background: var(--surface);
+		border: 0.5px solid var(--border);
+		border-radius: 8px;
+		font-size: 13px;
+		flex-wrap: wrap;
+	}
+	.rec-jira__key {
+		font-family: 'JetBrains Mono', monospace;
+		font-size: 11px;
+		font-weight: 600;
+		color: #0052cc;
+		padding: 2px 6px;
+		background: rgba(0, 82, 204, 0.08);
+		border-radius: 4px;
+	}
+	.rec-jira__title {
+		color: var(--text);
+		flex: 1;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.rec-jira__link {
+		color: #0052cc;
+		text-decoration: none;
+		font-weight: 500;
+		font-size: 12px;
+		white-space: nowrap;
+	}
+	.rec-jira__link:hover {
+		text-decoration: underline;
+	}
+
 	.rec {
 		display: flex;
 		flex-direction: column;

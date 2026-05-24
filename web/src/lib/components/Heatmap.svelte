@@ -1,5 +1,5 @@
 <script lang="ts">
-	export type HeatmapCellState = 'free' | 'busy' | 'conflict' | 'off' | 'focus';
+	export type HeatmapCellState = 'free' | 'busy' | 'conflict' | 'off' | 'focus' | 'task';
 
 	export interface HeatmapRow {
 		label: string;
@@ -149,6 +149,9 @@
 	</div>
 	<div class="legend-item">
 		<span class="legend-item__swatch hc--focus"></span>Фокус-время
+	</div>
+	<div class="legend-item">
+		<span class="legend-item__swatch hc--task"></span>Задача
 	</div>
 </div>
 

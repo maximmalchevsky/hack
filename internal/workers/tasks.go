@@ -27,6 +27,11 @@ const (
 	// TaskTasksAIEstimate — раз в 30 минут; для задач без estimated_hours
 	// и ai_estimated_hours дёргает GigaChat.
 	TaskTasksAIEstimate = "scheduler:tick:tasks-ai-estimate"
+
+	// TaskTasksReplanOne — пересчитать план одного сотрудника. Триггерится
+	// когда меняется его профиль / появилось/удалилось исключение.
+	// Без этого старый план остаётся на нерабочих днях и виден как конфликт.
+	TaskTasksReplanOne = "tasks:replan:one"
 )
 
 // Очереди по приоритетам.

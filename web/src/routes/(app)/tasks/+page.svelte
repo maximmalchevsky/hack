@@ -53,7 +53,7 @@
 		success = null;
 		try {
 			const r = await replanTasks();
-			success = `Пересчитал ${r.planned_tasks} задач, всего ${r.total_hours} ч на горизонт ${r.horizon_end}.${r.ai_calls > 0 ? ` AI оценил ${r.ai_calls} задач.` : ''}`;
+			success = `План обновлён: ${pluralTasks(r.planned_tasks)}, всего ${r.total_hours} ч.${r.ai_calls > 0 ? ` AI оценил ${pluralTasks(r.ai_calls)}.` : ''}`;
 			await load();
 		} catch (e) {
 			error = e instanceof ApiError ? e.message : String(e);
@@ -191,13 +191,28 @@
 		if (!t.due_at) return false;
 		return new Date(t.due_at).getTime() < Date.now();
 	}
+
+	// pluralTasks(2) → '2 задачи', pluralTasks(5) → '5 задач'
+	function pluralTasks(n: number): string {
+		const m10 = n % 10;
+		const m100 = n % 100;
+		if (m10 === 1 && m100 !== 11) return `${n} задача`;
+		if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return `${n} задачи`;
+		return `${n} задач`;
+	}
+
+	// fmtPlanDate("2026-06-06") → "6 июня"
+	function fmtPlanDate(iso: string): string {
+		const d = new Date(iso);
+		return d.toLocaleDateString('ru', { day: 'numeric', month: 'long' });
+	}
 </script>
 
 <div class="page-header">
 	<div>
 		<h1>Задачи</h1>
 		<div class="page-header__subtitle">
-			Импорт из Jira + автоматическое распределение времени по дням. GigaChat оценивает задачи без указанного estimate.
+			Задачи из Jira, разложенные по дням с учётом встреч и приоритетов.
 		</div>
 	</div>
 	<div class="page-header__actions">

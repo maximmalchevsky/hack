@@ -55,8 +55,52 @@ func Run(ctx context.Context, db *pgxpool.Pool, enq Enqueuer, log zerolog.Logger
 	if err != nil {
 		return fmt.Errorf("bootstrap events: %w", err)
 	}
+	if err := backfillMeetingEvents(ctx, db, log); err != nil {
+		// best-effort — без backfill старые встречи останутся невидимы,
+		// но это не повод валить весь bootstrap.
+		log.Warn().Err(err).Msg("bootstrap: backfill meeting events failed")
+	}
 	if enq != nil {
 		enqueueAllEmployees(ctx, db, enq, log, created)
+	}
+	return nil
+}
+
+// backfillMeetingEvents — для всех активных (не cancelled) meeting_proposals,
+// у которых ещё нет calendar_event у инициатора, создаёт его. Идемпотентно
+// (NOT EXISTS-фильтр). Нужен потому, что раньше Propose() писал calendar_event
+// только при успешном push в Yandex; встречи без Yandex-интеграции
+// у инициатора были невидимы в /dashboard, /workload, find-window.
+func backfillMeetingEvents(ctx context.Context, db *pgxpool.Pool, log zerolog.Logger) error {
+	tag, err := db.Exec(ctx, `
+		INSERT INTO calendar_events
+			(employee_id, integration_id, source_event_id, title, description,
+			 start_at, end_at, status, category, fetched_at)
+		SELECT mp.initiator_emp,
+		       NULL,
+		       'meeting-' || mp.id::text || '-' || mp.initiator_emp::text,
+		       mp.title,
+		       NULL,
+		       mp.start_at,
+		       mp.end_at,
+		       'confirmed',
+		       NULLIF(mp.category, ''),
+		       now()
+		FROM meeting_proposals mp
+		WHERE mp.cancelled_at IS NULL
+		  AND mp.initiator_emp IS NOT NULL
+		  AND mp.end_at > now()
+		  AND NOT EXISTS (
+		      SELECT 1 FROM calendar_events ce
+		      WHERE ce.integration_id IS NULL
+		        AND ce.source_event_id = 'meeting-' || mp.id::text || '-' || mp.initiator_emp::text
+		  )
+	`)
+	if err != nil {
+		return err
+	}
+	if n := tag.RowsAffected(); n > 0 {
+		log.Info().Int64("count", n).Msg("bootstrap: backfilled meeting calendar_events")
 	}
 	return nil
 }

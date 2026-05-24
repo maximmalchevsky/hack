@@ -24,13 +24,18 @@ func NewProfileHandler(svc *service.ProfileService, enq *workers.Enqueuer) *Prof
 }
 
 // triggerRecompute — после изменений профиля заводим перерасчёт метрик +
-// перегенерацию рекомендаций. Ошибки enqueue не валим — это best-effort.
+// перегенерацию рекомендаций + пересчёт плана задач. Все три — best-effort
+// async через Asynq.
+//
+// Без replan'а плана старые task blocks на бывших рабочих днях остаются
+// в calendar_events и отображаются как «вне графика» в heatmap.
 func (h *ProfileHandler) triggerRecompute(empID uuid.UUID) {
 	if h.enqueuer == nil || empID == uuid.Nil {
 		return
 	}
 	_ = h.enqueuer.EnqueueMetricsRecompute(empID)
 	_ = h.enqueuer.EnqueueAIRecommend(empID)
+	_ = h.enqueuer.EnqueueTasksReplanOne(empID)
 }
 
 // Mount: ожидает, что вызывающий код уже навесил AuthRequired.

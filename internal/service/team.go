@@ -273,6 +273,9 @@ type CellEventRef struct {
 	Title   string    `json:"title"`
 	StartAt time.Time `json:"start_at"`
 	EndAt   time.Time `json:"end_at"`
+	// Category — категория события (Стендапы / Ревью / Задача / Фокус-время / …).
+	// Фронт по ней различает task-блоки от обычных встреч.
+	Category string `json:"category,omitempty"`
 }
 
 type CellExceptionRef struct {
@@ -316,15 +319,19 @@ func (s *TeamService) Availability(ctx context.Context, teamID uuid.UUID, viewer
 		weekday = 7 // воскресенье — последний
 	}
 	monday := time.Date(now.Year(), now.Month(), now.Day()-weekday+1, 0, 0, 0, 0, loc)
-	friday := monday.AddDate(0, 0, 4).Add(24*time.Hour - time.Second)
+	sunday := monday.AddDate(0, 0, 6).Add(24*time.Hour - time.Second)
 
 	hours := []int{8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18}
-	days := []string{"ПН", "ВТ", "СР", "ЧТ", "ПТ"}
+	// Показываем все 7 дней — выходные дни сотрудника определяются по его
+	// work_profile (если в дне нет рабочих часов → клетки = "off"). Это даёт
+	// корректный heatmap для сотрудников с нестандартными графиками
+	// (например, Вт–Сб или Пн–Сб).
+	days := []string{"ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"}
 
 	resp := &AvailabilityResponse{
 		TeamID:   teamID,
 		From:     monday,
-		To:       friday,
+		To:       sunday,
 		Hours:    hours,
 		Days:     days,
 		Timezone: loc.String(),
@@ -348,12 +355,12 @@ func (s *TeamService) Availability(ctx context.Context, teamID uuid.UUID, viewer
 		events, _ := s.events.List(ctx, repository.ListEventsFilter{
 			EmployeeID: m.EmployeeID,
 			From:       monday,
-			To:         friday,
+			To:         sunday,
 		})
 		excs, _ := s.excs.List(ctx, repository.ListExceptionsFilter{
 			EmployeeID: m.EmployeeID,
 			From:       monday,
-			To:         friday,
+			To:         sunday,
 		})
 
 		fillRow(row.Cells, row.Details, hours, monday, loc, profile, events, excs)
@@ -365,7 +372,9 @@ func (s *TeamService) Availability(ctx context.Context, teamID uuid.UUID, viewer
 func fillRow(cells []string, details []CellDetail, hours []int, weekStart time.Time, loc *time.Location,
 	profile *domain.WorkProfile, events []domain.CalendarEvent, excs []domain.TimeException,
 ) {
-	for dayIdx := 0; dayIdx < 5; dayIdx++ {
+	// 7 дней недели. В нерабочие дни сотрудника (profile.DaysOfWeek == nil)
+	// все клетки автоматически окажутся "off".
+	for dayIdx := 0; dayIdx < 7; dayIdx++ {
 		dayStart := weekStart.AddDate(0, 0, dayIdx)
 
 		var dh *domain.DayHours
@@ -381,6 +390,10 @@ func fillRow(cells []string, details []CellDetail, hours []int, weekStart time.T
 				dh = profile.DaysOfWeek.Thu
 			case time.Friday:
 				dh = profile.DaysOfWeek.Fri
+			case time.Saturday:
+				dh = profile.DaysOfWeek.Sat
+			case time.Sunday:
+				dh = profile.DaysOfWeek.Sun
 			}
 		}
 
@@ -422,7 +435,12 @@ func fillRow(cells []string, details []CellDetail, hours []int, weekStart time.T
 				cells[cellIdx] = "conflict"
 				details[cellIdx].Events = overlapping
 			case busy:
-				cells[cellIdx] = "busy"
+				// Все события в ячейке — task/focus блоки? Отдельный state.
+				if allTaskBlocks(overlapping) {
+					cells[cellIdx] = "task"
+				} else {
+					cells[cellIdx] = "busy"
+				}
 				details[cellIdx].Events = overlapping
 			case inWork:
 				cells[cellIdx] = "free"
@@ -467,6 +485,20 @@ func hasTimeOverlap(events []CellEventRef) bool {
 	return false
 }
 
+// allTaskBlocks — true если ВСЕ события в ячейке — task/focus блоки
+// (созданные planner'ом). Это позволяет UI красить ячейку отдельным цветом.
+func allTaskBlocks(events []CellEventRef) bool {
+	if len(events) == 0 {
+		return false
+	}
+	for _, ev := range events {
+		if ev.Category != TaskBlockCategoryName && ev.Category != FocusCategoryName {
+			return false
+		}
+	}
+	return true
+}
+
 func eventsOverlapping(s, e time.Time, events []domain.CalendarEvent) []CellEventRef {
 	var out []CellEventRef
 	for _, ev := range events {
@@ -474,10 +506,15 @@ func eventsOverlapping(s, e time.Time, events []domain.CalendarEvent) []CellEven
 			continue
 		}
 		if ev.StartAt.Before(e) && s.Before(ev.EndAt) {
+			cat := ""
+			if ev.Category != nil {
+				cat = *ev.Category
+			}
 			out = append(out, CellEventRef{
-				Title:   ev.Title,
-				StartAt: ev.StartAt,
-				EndAt:   ev.EndAt,
+				Title:    ev.Title,
+				StartAt:  ev.StartAt,
+				EndAt:    ev.EndAt,
+				Category: cat,
 			})
 		}
 	}
@@ -535,6 +572,21 @@ func overlapsAny(s, e time.Time, evs []domain.CalendarEvent) bool {
 	return false
 }
 
+// firstOverlap — возвращает первое пересекающееся событие или nil.
+// Используется чтобы понять «занят встречей» vs «занят задачей» по category.
+func firstOverlap(s, e time.Time, evs []domain.CalendarEvent) *domain.CalendarEvent {
+	for i := range evs {
+		ev := &evs[i]
+		if ev.IsExcluded || ev.Status == domain.EventCancelled {
+			continue
+		}
+		if s.Before(ev.EndAt) && ev.StartAt.Before(e) {
+			return ev
+		}
+	}
+	return nil
+}
+
 // keep analytics import in use (для будущего FindMeetingWindows и пр.)
 var _ = analytics.DefaultWeights
 
@@ -552,6 +604,15 @@ type MeetingParticipant struct {
 	//   vacation, sick_leave, business_trip, personal_hours, custom.
 	// Фронт показывает понятный текст «отпуск/больничный/командировка».
 	ExceptionKind string `json:"exception_kind,omitempty"`
+	// BusyKind — детализация Reason="busy":
+	//   meeting — обычная встреча
+	//   task    — план задачи (Jira) → задача важнее, конфликт критичный
+	//   focus   — focus-time блок (high-priority задача)
+	// Если пусто при Reason=busy — fallback на meeting.
+	BusyKind string `json:"busy_kind,omitempty"`
+	// BusyTitle — заголовок события которое занимает слот. Например
+	// «Daily Platform» или «План: PROJ-123 — Реализовать webhook».
+	BusyTitle string `json:"busy_title,omitempty"`
 	// LocalTime — окно встречи В TZ участника (формат 15:04–15:04).
 	// Пример: для участника в Лиссабоне, если встреча 10:00–11:00 МСК,
 	// здесь будет "07:00–08:00". Полезно когда TZ участника отличается от TZ
@@ -798,14 +859,33 @@ func (s *TeamService) findWindowsCore(
 				})
 			} else {
 				excKind := ""
+				busyKind := ""
+				busyTitle := ""
 				if reason == "in_exception" {
 					excKind = firstActiveExceptionKind(t, slotEnd, mc.excs)
+				}
+				if reason == "busy" {
+					if ev := firstOverlap(t, slotEnd, mc.events); ev != nil {
+						busyTitle = ev.Title
+						switch {
+						case ev.Category != nil && *ev.Category == FocusCategoryName:
+							busyKind = "focus"
+						case ev.Category != nil && *ev.Category == TaskBlockCategoryName:
+							busyKind = "task"
+						default:
+							busyKind = "meeting"
+						}
+					} else {
+						busyKind = "meeting"
+					}
 				}
 				unavail = append(unavail, MeetingParticipant{
 					EmployeeID:    mc.empID.String(),
 					FullName:      mc.name,
 					Reason:        reason,
 					ExceptionKind: excKind,
+					BusyKind:      busyKind,
+					BusyTitle:     busyTitle,
 					LocalTime:     localTime,
 					WorkHours:     workHours,
 					Timezone:      tz,

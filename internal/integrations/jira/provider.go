@@ -172,6 +172,12 @@ func (p *Provider) FetchTasks(ctx context.Context, token *integrations.Token, as
 		if iss.Fields.TimeOriginalSec > 0 {
 			est := float64(iss.Fields.TimeOriginalSec) / 3600.0
 			t.EstimatedHours = &est
+		} else if h, ok := ParseHoursFromText(t.Title + " " + t.Description); ok {
+			// Fallback: автор задачи мог написать «Время на задачу 10 часов»
+			// в описании, не заполняя поле Original Estimate в Jira.
+			// Парсим из текста — это лучше чем дефолт 4ч из планировщика.
+			est := h
+			t.EstimatedHours = &est
 		}
 		if iss.Fields.TimeSpentSec > 0 {
 			act := float64(iss.Fields.TimeSpentSec) / 3600.0

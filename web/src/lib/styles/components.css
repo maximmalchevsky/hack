@@ -749,6 +749,12 @@ input[type='checkbox'] {
 	background: var(--teal-bg);
 	border: 1px solid var(--teal-text);
 }
+/* Задача (Jira-блок) — фиолетовый, отличается от обычного busy/focus.
+   Когда наводишь — в tooltip видно «📌 PROJ-XX — Заголовок». */
+.hc--task {
+	background: var(--purple-bg);
+	border: 1px solid var(--purple-text);
+}
 
 .heatmap-hours {
 	display: grid;

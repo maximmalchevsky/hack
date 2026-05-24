@@ -355,6 +355,19 @@
 					return 'отсутствует';
 			}
 		}
+		// Различаем «занят встречей» и «занят задачей» — задача важнее и
+		// её не стоит сдвигать ради встречи (так задумано планировщиком).
+		if (p.reason === 'busy' && p.busy_kind) {
+			switch (p.busy_kind) {
+				case 'task':
+					return 'занят задачей';
+				case 'focus':
+					return 'фокус-время';
+				case 'meeting':
+				default:
+					return 'занят встречей';
+			}
+		}
 		switch (p.reason) {
 			case 'busy':
 				return 'занят встречей';

@@ -75,6 +75,7 @@
 	const yandexIntegrations = $derived(
 		integrations.filter((i) => i.provider === 'yandex_calendar')
 	);
+	const jiraIntegrations = $derived(integrations.filter((i) => i.provider === 'jira'));
 
 	async function load() {
 		loading = true;
@@ -357,6 +358,7 @@
 	</Card>
 </div>
 
+{#if jiraIntegrations.length === 0}
 <div style="margin-bottom: 24px;">
 	<Card title="Подключить Jira" subtitle="Jira Cloud (Atlassian) — задачи попадут в /tasks для автоматического планирования">
 		<div class="grid-2" style="gap: 12px;">
@@ -387,6 +389,7 @@
 		</Button>
 	</Card>
 </div>
+{/if}
 
 <Card title="Подключённые источники">
 	{#if loading}

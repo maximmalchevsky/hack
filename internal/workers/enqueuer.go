@@ -80,6 +80,26 @@ func (e *Enqueuer) EnqueueMetricsRecompute(employeeID uuid.UUID) error {
 	return err
 }
 
+// EnqueueTasksReplanOne — пересчитать план задач одного сотрудника.
+// Дёргается при изменении профиля / исключений, чтобы старые task blocks
+// на нерабочих днях были удалены и план расположился по актуальному графику.
+func (e *Enqueuer) EnqueueTasksReplanOne(employeeID uuid.UUID) error {
+	if e.client == nil {
+		return nil
+	}
+	body, err := json.Marshal(MetricsRecomputePayload{EmployeeID: employeeID})
+	if err != nil {
+		return err
+	}
+	task := asynq.NewTask(TaskTasksReplanOne, body)
+	_, err = e.client.Enqueue(task,
+		asynq.Queue(QueueDefault),
+		asynq.MaxRetry(2),
+		asynq.Timeout(2*time.Minute),
+	)
+	return err
+}
+
 // AIRecommendPayload — нагрузка для ai:recommend (всегда employee_id).
 type AIRecommendPayload struct {
 	EmployeeID uuid.UUID `json:"employee_id"`

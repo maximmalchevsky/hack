@@ -49,7 +49,7 @@
 			const cells = m.cells.slice(d * availability.hours.length, (d + 1) * availability.hours.length);
 			rows.push({
 				label: availability.days[d],
-				cells: cells as ('free' | 'busy' | 'conflict' | 'off')[]
+				cells: cells as ('free' | 'busy' | 'conflict' | 'off' | 'focus' | 'task')[]
 			});
 		}
 		return rows;
@@ -78,11 +78,16 @@
 		const lines: string[] = [head];
 
 		if (det?.events && det.events.length > 0) {
-			// «Занято» с конкретикой.
+			// «Занято» с конкретикой. Префикс показывает категорию (📌 для задач,
+			// ✦ для фокус-времени, • для обычных встреч) — сразу видно что мешает.
 			for (const ev of det.events) {
 				const title = ev.title?.trim() || 'Без названия';
 				const range = `${fmtTime(ev.start_at)}–${fmtTime(ev.end_at)}`;
-				lines.push(`• ${title} (${range})`);
+				let marker = '•';
+				// Legacy «План задачи» оставляем как fallback, пока не вычистили старые записи.
+				if (ev.category === 'Задача' || ev.category === 'План задачи') marker = '📌';
+				else if (ev.category === 'Фокус-время') marker = '✦';
+				lines.push(`${marker} ${title} (${range})`);
 			}
 			if (state === 'conflict') {
 				// Различаем double-booking от события вне графика.

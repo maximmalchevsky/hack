@@ -23,6 +23,12 @@ import (
 // MeetingProposalService — предложение встречи команде:
 // шлёт уведомление каждому участнику + инициатору, и (если у инициатора подключён
 // Yandex Календарь) — кладёт событие в его календарь через CalDAV PUT.
+// ReplanEnqueuer — лёгкий интерфейс для запуска tasks:replan:one из этого
+// сервиса без circular dependency. Реализуется *workers.Enqueuer.
+type ReplanEnqueuer interface {
+	EnqueueTasksReplanOne(employeeID uuid.UUID) error
+}
+
 type MeetingProposalService struct {
 	pool          *pgxpool.Pool
 	teams         *repository.TeamRepo
@@ -36,6 +42,7 @@ type MeetingProposalService struct {
 	email         *notify.EmailTransport    // nil если SMTP не настроен
 	imipReplyTo   string                    // тех. ящик для iMIP. Пусто = инвайты не шлём.
 	imipEnabled   bool
+	replanEnq     ReplanEnqueuer            // nil — replan не дёргаем
 }
 
 func NewMeetingProposalService(pool *pgxpool.Pool, notif *NotificationService) *MeetingProposalService {
@@ -64,6 +71,32 @@ func (s *MeetingProposalService) WithIMIP(email *notify.EmailTransport, replyTo 
 	s.imipReplyTo = strings.TrimSpace(replyTo)
 	s.imipEnabled = enabled && s.imipReplyTo != "" && email != nil && email.Enabled()
 	return s
+}
+
+// WithReplanEnqueuer — DI: после Propose/Update/Cancel будем дёргать
+// tasks:replan:one, чтобы задачи в плане пересчитались с учётом новой встречи.
+func (s *MeetingProposalService) WithReplanEnqueuer(enq ReplanEnqueuer) *MeetingProposalService {
+	s.replanEnq = enq
+	return s
+}
+
+// triggerReplan — ставит tasks:replan:one для каждого emp_id из списка.
+// Дедуплицирует, фильтрует uuid.Nil. Best-effort — ошибки enqueue игнорим.
+func (s *MeetingProposalService) triggerReplan(empIDs ...uuid.UUID) {
+	if s.replanEnq == nil {
+		return
+	}
+	seen := map[uuid.UUID]struct{}{}
+	for _, id := range empIDs {
+		if id == uuid.Nil {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		_ = s.replanEnq.EnqueueTasksReplanOne(id)
+	}
 }
 
 // sendIMIPInvites — отправляет .ics-инвайт каждому участнику с email'ом.
@@ -356,9 +389,11 @@ func (s *MeetingProposalService) Propose(ctx context.Context, in ProposeMeetingI
 
 	// Yandex push — ТОЛЬКО инициатору сразу. Остальные участники получат
 	// событие в свой Яндекс при accept (опционально, по чекбоксу).
+	yandexCreated := false
 	if in.InitiatorEmp != uuid.Nil {
 		pushed := s.pushYandexForEmployee(ctx, meetingID, in.InitiatorEmp, in, teamName, initiatorName, category)
 		if pushed != nil {
+			yandexCreated = true
 			res.YandexPushed++
 			res.YandexEventUID = pushed.UID
 			// Помечаем что в Яндекс инициатора положили.
@@ -367,6 +402,24 @@ func (s *MeetingProposalService) Propose(ctx context.Context, in ProposeMeetingI
 				WHERE meeting_id = $1 AND employee_id = $2
 			`, meetingID, in.InitiatorEmp)
 		}
+	}
+
+	// Если Yandex-push не сработал (нет интеграции или ошибка) — всё равно
+	// создаём calendar_event у инициатора напрямую. Без этого встреча
+	// не показывается в /dashboard, /workload, find-window — никуда.
+	if !yandexCreated && in.InitiatorEmp != uuid.Nil && s.events != nil {
+		src := "meeting-" + meetingID.String() + "-" + in.InitiatorEmp.String()
+		_, _ = s.events.Upsert(ctx, repository.UpsertEventInput{
+			EmployeeID:    in.InitiatorEmp,
+			IntegrationID: nil,
+			SourceEventID: src,
+			Title:         title,
+			Description:   fmt.Sprintf("Команда: %s. Инициатор: %s.", teamName, initiatorName),
+			StartAt:       in.StartAt,
+			EndAt:         in.EndAt,
+			Status:        domain.EventConfirmed,
+			Category:      category,
+		})
 	}
 
 	// iMIP-инвайт всем участникам с email'ом. Best-effort: если SMTP/IMIP
@@ -378,6 +431,15 @@ func (s *MeetingProposalService) Propose(ctx context.Context, in ProposeMeetingI
 		in.StartAt, in.EndAt,
 		in.InitiatorEmp, initiatorName, members,
 	)
+
+	// Пересчёт плана задач затронутых сотрудников — чтобы task-блоки
+	// обтекали новую встречу. Инициатор + accept'нутые участники.
+	// Остальные пересчитают по cron'у когда accept'нут.
+	replanIDs := []uuid.UUID{in.InitiatorEmp}
+	for _, m := range members {
+		replanIDs = append(replanIDs, m.EmployeeID)
+	}
+	s.triggerReplan(replanIDs...)
 
 	return res, nil
 }
@@ -1012,6 +1074,15 @@ func (s *MeetingProposalService) Cancel(
 		return err
 	}
 
+	// 3.1. Удаляем native calendar_events которые мы создали в Propose() —
+	// иначе после отмены встреча продолжит висеть в /dashboard как busy.
+	// source_event_id вида "meeting-<meetingID>-<empID>" — фильтр по prefix.
+	_, _ = s.pool.Exec(ctx, `
+		DELETE FROM calendar_events
+		WHERE integration_id IS NULL
+		  AND source_event_id LIKE 'meeting-' || $1::text || '-%'
+	`, meetingID)
+
 	// 4. DELETE в Yandex для каждого активного push (best-effort, не падаем на ошибках).
 	type pushRow struct {
 		id            uuid.UUID
@@ -1093,6 +1164,20 @@ func (s *MeetingProposalService) Cancel(
 			},
 		})
 	}
+
+	// Replan плана задач затронутых: освобождённое время теперь может
+	// заполниться задачами.
+	replanIDs := []uuid.UUID{}
+	if initiatorEmp != nil {
+		replanIDs = append(replanIDs, *initiatorEmp)
+	}
+	if teamID != nil {
+		mems, _ := s.teams.Members(ctx, *teamID)
+		for _, m := range mems {
+			replanIDs = append(replanIDs, m.EmployeeID)
+		}
+	}
+	s.triggerReplan(replanIDs...)
 
 	return nil
 }
@@ -1191,6 +1276,16 @@ func (s *MeetingProposalService) Update(
 		return err
 	}
 
+	// Обновляем native calendar_events (созданные в Propose() для инициатора
+	// и accept'нувших участников). Source_event_id у них вида
+	// 'meeting-<meetingID>-<empID>'.
+	_, _ = s.pool.Exec(ctx, `
+		UPDATE calendar_events
+		SET title = $1, start_at = $2, end_at = $3
+		WHERE integration_id IS NULL
+		  AND source_event_id LIKE 'meeting-' || $4::text || '-%'
+	`, newTitle, newStart, newEnd, meetingID)
+
 	// PUT в Yandex для всех активных pushes (best-effort).
 	type pushRow struct {
 		id            uuid.UUID
@@ -1273,6 +1368,20 @@ func (s *MeetingProposalService) Update(
 			},
 		})
 	}
+
+	// Replan плана задач затронутых сотрудников: смещение встречи могло
+	// освободить старое время или занять новое — task-блоки должны переразложиться.
+	replanIDs := []uuid.UUID{}
+	if initiatorEmp != nil {
+		replanIDs = append(replanIDs, *initiatorEmp)
+	}
+	if teamID != nil {
+		mems, _ := s.teams.Members(ctx, *teamID)
+		for _, m := range mems {
+			replanIDs = append(replanIDs, m.EmployeeID)
+		}
+	}
+	s.triggerReplan(replanIDs...)
 
 	return nil
 }

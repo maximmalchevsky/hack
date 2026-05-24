@@ -59,6 +59,32 @@ func (h *Handlers) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(TaskSyncTickAll, h.handleSyncTickAll)
 	mux.HandleFunc(TaskTasksReplanAll, h.handleTasksReplanAll)
 	mux.HandleFunc(TaskTasksAIEstimate, h.handleTasksAIEstimate)
+	mux.HandleFunc(TaskTasksReplanOne, h.handleTasksReplanOne)
+}
+
+// handleTasksReplanOne — пересчёт плана одного сотрудника по событию
+// (изменение профиля, добавление исключения). Сбрасывает старые task
+// blocks и раскладывает план по актуальному графику.
+func (h *Handlers) handleTasksReplanOne(ctx context.Context, t *asynq.Task) error {
+	if h.deps.TaskPlanner == nil {
+		return nil
+	}
+	var p MetricsRecomputePayload
+	if err := json.Unmarshal(t.Payload(), &p); err != nil {
+		return fmt.Errorf("decode payload: %w", err)
+	}
+	if p.EmployeeID == uuid.Nil {
+		return nil
+	}
+	res, err := h.deps.TaskPlanner.Plan(ctx, p.EmployeeID)
+	if err != nil {
+		return err
+	}
+	h.deps.TaskPlanner.CheckOverload(ctx, p.EmployeeID, res)
+	h.deps.Log.Info().Str("employee_id", p.EmployeeID.String()).
+		Int("tasks", len(res.Tasks)).
+		Msg("tasks replan one: done")
+	return nil
 }
 
 // handleTasksReplanAll — раз в час дёргаем Plan для всех сотрудников с активными
@@ -73,9 +99,13 @@ func (h *Handlers) handleTasksReplanAll(ctx context.Context, _ *asynq.Task) erro
 	}
 	planned := 0
 	for _, id := range ids {
-		if _, err := h.deps.TaskPlanner.Plan(ctx, id); err == nil {
-			planned++
+		res, err := h.deps.TaskPlanner.Plan(ctx, id)
+		if err != nil {
+			continue
 		}
+		planned++
+		// Сразу после плана — проверяем перегруз.
+		h.deps.TaskPlanner.CheckOverload(ctx, id, res)
 	}
 	if planned > 0 {
 		h.deps.Log.Info().Int("count", planned).Msg("tasks replan: planned for employees")

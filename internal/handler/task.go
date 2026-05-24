@@ -91,6 +91,8 @@ func (h *TaskHandler) replan(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	// После replan'а — сразу проверяем перегруз и пишем рекомендацию.
+	h.planner.CheckOverload(c.Context(), empID, res)
 	return c.JSON(fiber.Map{
 		"ai_calls":      aiCalls,
 		"total_hours":   res.TotalHours,
