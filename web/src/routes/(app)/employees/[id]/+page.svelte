@@ -10,6 +10,7 @@
 	import ProfileHistory from '$lib/components/ProfileHistory.svelte';
 	import { ApiError } from '$lib/api/client';
 	import { user } from '$lib/stores/user';
+	import { roleLabel } from '$lib/roles';
 
 	let detail = $state<EmployeeDetail | null>(null);
 	let metrics = $state<EmployeeMetrics | null>(null);
@@ -113,7 +114,7 @@
 			<div>
 				<h1>{detail.employee.full_name}</h1>
 				<div class="page-header__subtitle">
-					{detail.employee.role}
+					{roleLabel(detail.employee.role)}
 					{#if detail.employee.department} · {detail.employee.department}{/if}
 					{#if detail.employee.position} · {detail.employee.position}{/if}
 					{#if detail.employee.timezone} · {detail.employee.timezone}{/if}

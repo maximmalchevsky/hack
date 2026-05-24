@@ -13,20 +13,15 @@
 		type ImportResult
 	} from '$lib/api/admin';
 	import { ApiError } from '$lib/api/client';
+	import { ROLES, roleLabel, type RoleSlug } from '$lib/roles';
 
 	let users = $state<AdminUser[]>([]);
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 	let success = $state<string | null>(null);
 
-	const ROLES: { value: UserRole; label: string }[] = [
-		{ value: 'admin', label: 'Администратор' },
-		{ value: 'employee', label: 'Сотрудник' },
-		{ value: 'manager', label: 'Руководитель' },
-		{ value: 'hr', label: 'HR' },
-		{ value: 'pm', label: 'Проектный менеджер' },
-		{ value: 'analyst', label: 'Аналитик' }
-	];
+	// Локальный alias на тип роли — чтобы старая сигнатура changeRole(UserRole) не сломалась.
+	type UserRole = RoleSlug;
 
 	onMount(async () => {
 		try {
@@ -43,7 +38,7 @@
 		try {
 			await updateUserRole(u.id, role);
 			users = users.map((x) => (x.id === u.id ? { ...x, role } : x));
-			success = `Роль "${u.full_name}" → ${role}`;
+			success = `Роль "${u.full_name}" → ${roleLabel(role)}`;
 		} catch (e) {
 			error = e instanceof ApiError ? e.message : String(e);
 		}

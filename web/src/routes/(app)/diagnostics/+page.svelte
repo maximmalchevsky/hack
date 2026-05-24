@@ -14,6 +14,7 @@
 		type BurnoutRow
 	} from '$lib/api/diagnostics';
 	import { ApiError } from '$lib/api/client';
+	import { roleLabel } from '$lib/roles';
 
 	let groups = $state<DiagnosticsGroups | null>(null);
 	let burnout = $state<BurnoutRow[]>([]);
@@ -205,7 +206,7 @@
 									<Badge variant="danger">риск выгорания</Badge>
 								</div>
 								<div class="text-text-2 text-xs">
-									{b.role}
+									{roleLabel(b.role)}
 									{#if b.department} · {b.department}{/if}
 								</div>
 								{#if b.reasons.length > 0}
@@ -249,7 +250,7 @@
 								{/if}
 							</div>
 							<div class="text-text-2 text-xs">
-								{r.role}
+								{roleLabel(r.role)}
 								{#if r.department} · {r.department}{/if}
 								{#if r.timezone} · {r.timezone}{/if}
 							</div>

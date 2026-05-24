@@ -7,6 +7,7 @@
 	import Tabs from '$lib/components/Tabs.svelte';
 	import { getHRRoadmap, type HRRoadmapItem } from '$lib/api/hr';
 	import { ApiError } from '$lib/api/client';
+	import { roleLabel } from '$lib/roles';
 
 	let items = $state<HRRoadmapItem[]>([]);
 	let loading = $state(true);
@@ -114,7 +115,7 @@
 						</div>
 						<div class="text-text-2 text-sm">{it.reason}</div>
 						<div class="text-text-3 text-xs mt-1">
-							{it.role}
+							{roleLabel(it.role)}
 							{#if it.department} · {it.department}{/if}
 							{#if it.days_since_update < 9999}· {it.days_since_update} дн с обновления{:else}· профиль не задан{/if}
 						</div>

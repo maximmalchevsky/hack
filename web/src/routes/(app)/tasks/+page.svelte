@@ -245,14 +245,14 @@
 	</Card>
 {:else}
 	<!-- Таблица задач -->
-	<Card title="Мои задачи" subtitle="Кликни в estimate чтобы поправить вручную">
+	<Card title="Мои задачи" subtitle="Кликни в оценку чтобы поправить вручную">
 		<table class="tasks-table">
 			<thead>
 				<tr>
 					<th>Задача</th>
 					<th>Приоритет</th>
 					<th>Срок</th>
-					<th>Estimate</th>
+					<th>Оценка</th>
 					<th>Статус</th>
 				</tr>
 			</thead>

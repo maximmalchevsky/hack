@@ -120,7 +120,7 @@
 									onclick={() => openBrief((n.payload as any).brief_md, n.title)}
 								>
 									<i class="ti ti-sparkles"></i>
-									Подготовка к встрече
+									ИИ-резюме
 								</button>
 							{/if}
 
@@ -142,7 +142,7 @@
 	</div>
 {/if}
 
-<Modal open={briefOpen} title={briefTitle || 'Подготовка к встрече'} size="md" onClose={() => (briefOpen = false)}>
+<Modal open={briefOpen} title={briefTitle || 'ИИ-резюме встречи'} size="md" onClose={() => (briefOpen = false)}>
 	<div class="brief-content notif-md">
 		{@html renderMd(briefMd)}
 	</div>
