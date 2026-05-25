@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -16,6 +17,20 @@ import (
 
 	"github.com/google/uuid"
 )
+
+// readErrorBody — читает тело ответа GigaChat при не-2xx (макс 512 байт),
+// чтобы сложить в ошибку понятную причину («insufficient balance», «scope is not
+// available for this client», «model not found», etc). GigaChat по факту
+// возвращает JSON {"message":"…"} либо {"status":...,"message":"…"}.
+func readErrorBody(resp *http.Response) string {
+	if resp == nil || resp.Body == nil {
+		return ""
+	}
+	const max = 512
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, max))
+	// Сжимаем многострочный JSON в одну строку, чтобы не ломать логи.
+	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(string(b), "\n", " "), "\r", ""))
+}
 
 // OAuth-endpoint GigaChat (ngw.devices.sberbank.ru:9443) выписан корневым
 // сертификатом Минцифры РФ, не входящим в системный root pool. Chat endpoint
@@ -129,10 +144,10 @@ func (g *GigaChat) refreshToken(ctx context.Context) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusUnauthorized {
-		return ErrUnauthorized
+		return fmt.Errorf("%w: %s", ErrUnauthorized, readErrorBody(resp))
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("gigachat: oauth status %d", resp.StatusCode)
+		return fmt.Errorf("gigachat: oauth status %d — %s", resp.StatusCode, readErrorBody(resp))
 	}
 
 	var out struct {
@@ -207,13 +222,13 @@ func (g *GigaChat) Complete(ctx context.Context, req CompletionRequest) (*Comple
 	case http.StatusOK:
 		// ok
 	case http.StatusUnauthorized:
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: %s", ErrUnauthorized, readErrorBody(resp))
 	case http.StatusTooManyRequests:
-		return nil, ErrRateLimited
+		return nil, fmt.Errorf("%w: %s", ErrRateLimited, readErrorBody(resp))
 	case http.StatusServiceUnavailable, http.StatusBadGateway, http.StatusGatewayTimeout:
-		return nil, ErrUnavailable
+		return nil, fmt.Errorf("%w: %s", ErrUnavailable, readErrorBody(resp))
 	default:
-		return nil, fmt.Errorf("gigachat: chat status %d", resp.StatusCode)
+		return nil, fmt.Errorf("gigachat: chat status %d — %s", resp.StatusCode, readErrorBody(resp))
 	}
 
 	var out struct {
@@ -306,17 +321,21 @@ func (g *GigaChat) Stream(ctx context.Context, req StreamRequest) (<-chan Stream
 	case http.StatusOK:
 		// ok
 	case http.StatusUnauthorized:
+		errMsg := readErrorBody(resp)
 		resp.Body.Close()
-		return nil, ErrUnauthorized
+		return nil, fmt.Errorf("%w: %s", ErrUnauthorized, errMsg)
 	case http.StatusTooManyRequests:
+		errMsg := readErrorBody(resp)
 		resp.Body.Close()
-		return nil, ErrRateLimited
+		return nil, fmt.Errorf("%w: %s", ErrRateLimited, errMsg)
 	case http.StatusServiceUnavailable, http.StatusBadGateway, http.StatusGatewayTimeout:
+		errMsg := readErrorBody(resp)
 		resp.Body.Close()
-		return nil, ErrUnavailable
+		return nil, fmt.Errorf("%w: %s", ErrUnavailable, errMsg)
 	default:
+		errMsg := readErrorBody(resp)
 		resp.Body.Close()
-		return nil, fmt.Errorf("gigachat: stream status %d", resp.StatusCode)
+		return nil, fmt.Errorf("gigachat: stream status %d — %s", resp.StatusCode, errMsg)
 	}
 
 	out := make(chan StreamChunk, 16)

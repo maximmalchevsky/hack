@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog/log"
 
 	"worktimesync/internal/ai"
 	"worktimesync/internal/ai/prompts"
@@ -168,6 +169,9 @@ func (s *AIChatService) AskStream(ctx context.Context, userID uuid.UUID, convers
 		MaxTokens:   800,
 	})
 	if err != nil {
+		// Логируем причину отказа от streaming-вызова. До этого молча падали
+		// в Complete-fallback и пользователь видел только «…» в UI.
+		log.Warn().Err(err).Str("user_id", userID.String()).Msg("ai_chat: stream failed, falling back to complete")
 		// Fallback: пробуем Complete синхронно, чтобы юзер не остался ни с чем.
 		go func() {
 			defer close(out)
@@ -177,6 +181,7 @@ func (s *AIChatService) AskStream(ctx context.Context, userID uuid.UUID, convers
 				MaxTokens:   800,
 			})
 			if cerr != nil {
+				log.Error().Err(cerr).Str("user_id", userID.String()).Msg("ai_chat: complete fallback also failed")
 				out <- AskStreamEvent{ConversationID: convID, Err: cerr}
 				out <- AskStreamEvent{ConversationID: convID, Done: true}
 				return
@@ -193,6 +198,7 @@ func (s *AIChatService) AskStream(ctx context.Context, userID uuid.UUID, convers
 		var buf strings.Builder
 		for chunk := range llmStream {
 			if chunk.Err != nil {
+				log.Error().Err(chunk.Err).Str("user_id", userID.String()).Msg("ai_chat: stream chunk error")
 				out <- AskStreamEvent{ConversationID: convID, Err: chunk.Err}
 			}
 			if chunk.Delta != "" {
@@ -207,6 +213,8 @@ func (s *AIChatService) AskStream(ctx context.Context, userID uuid.UUID, convers
 				answer := buf.String()
 				if answer != "" {
 					_ = s.appendMessage(ctx, convID, "assistant", answer)
+				} else {
+					log.Warn().Str("user_id", userID.String()).Msg("ai_chat: stream ended with empty answer")
 				}
 				out <- AskStreamEvent{ConversationID: convID, Done: true}
 				return
