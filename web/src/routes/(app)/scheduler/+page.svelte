@@ -25,6 +25,7 @@
 		type MyMeeting
 	} from '$lib/api/meetings';
 	import IncomingInvitesCard from '$lib/components/IncomingInvitesCard.svelte';
+	import CreateManualMeetingModal from '$lib/components/CreateManualMeetingModal.svelte';
 	import { ApiError } from '$lib/api/client';
 	import { user } from '$lib/stores/user';
 
@@ -150,6 +151,9 @@
 
 	// Для Cmd+N — фокусируем селект длительности.
 	let durationSelect = $state<HTMLSelectElement | null>(null);
+
+	// Модалка «Создать вручную» — параллельный путь, не зависит от find-window.
+	let manualOpen = $state(false);
 
 	const viewerTZ = $derived($user?.timezone || 'Europe/Moscow');
 
@@ -464,7 +468,27 @@
 			Подбор оптимальных окон для всей команды. TZ просмотра: {viewerTZ}
 		</div>
 	</div>
+	{#if canManageMeetings}
+		<div class="page-header__actions">
+			<Button
+				variant="primary"
+				icon="ti-calendar-plus"
+				onclick={() => (manualOpen = true)}
+			>
+				Создать вручную
+			</Button>
+		</div>
+	{/if}
 </div>
+
+<CreateManualMeetingModal
+	open={manualOpen}
+	onClose={() => (manualOpen = false)}
+	onCreated={() => {
+		success = 'Встреча создана.';
+		void loadMyMeetings();
+	}}
+/>
 
 {#if error}
 	<div class="section">

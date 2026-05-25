@@ -26,10 +26,47 @@ func (h *MeetingsHandler) Mount(r fiber.Router) {
 	g := r.Group("/meetings")
 	g.Get("/my", h.list)
 	g.Get("/incoming", h.incoming)
+	g.Post("/check-conflicts", h.checkConflicts)
 	g.Get("/:id/responses", h.responses)
 	g.Post("/:id/respond", h.respond)
 	g.Put("/:id", h.update)
 	g.Delete("/:id", h.cancel)
+}
+
+// checkConflictsRequest — body для POST /meetings/check-conflicts.
+// Используется UI «Создать вручную» для мягкого предупреждения о занятости.
+type checkConflictsRequest struct {
+	StartAt     time.Time   `json:"start_at"`
+	EndAt       time.Time   `json:"end_at"`
+	EmployeeIDs []uuid.UUID `json:"employee_ids"`
+}
+
+// checkConflicts — POST /meetings/check-conflicts.
+// Возвращает список занятостей по каждому из переданных employee_ids,
+// пересекающихся с указанным слотом. UI рендерит как «мягкое» предупреждение,
+// не блокирующее создание.
+func (h *MeetingsHandler) checkConflicts(c fiber.Ctx) error {
+	var req checkConflictsRequest
+	if err := json.Unmarshal(c.Body(), &req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
+	}
+	if req.StartAt.IsZero() || req.EndAt.IsZero() {
+		return fiber.NewError(fiber.StatusBadRequest, "start_at and end_at required")
+	}
+	if !req.EndAt.After(req.StartAt) {
+		return fiber.NewError(fiber.StatusBadRequest, "end_at must be after start_at")
+	}
+	if len(req.EmployeeIDs) == 0 {
+		return c.JSON(fiber.Map{"conflicts": []any{}})
+	}
+	conflicts, err := h.proposal.CheckConflicts(c.Context(), req.StartAt, req.EndAt, req.EmployeeIDs)
+	if err != nil {
+		if errors.Is(err, service.ErrMeetingInvalidRange) {
+			return fiber.NewError(fiber.StatusBadRequest, "invalid range")
+		}
+		return err
+	}
+	return c.JSON(fiber.Map{"conflicts": conflicts})
 }
 
 // incoming — приглашения для текущего пользователя.

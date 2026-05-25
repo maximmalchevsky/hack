@@ -140,7 +140,7 @@
 				{
 					page: 'ai-chat',
 					href: '/ai-chat',
-					label: 'AI-ассистент',
+					label: 'ИИ-ассистент',
 					icon: 'ti-sparkles',
 					roles: ['employee', 'manager', 'pm', 'hr', 'analyst', 'admin']
 				},

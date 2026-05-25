@@ -63,3 +63,28 @@ export const respondToMeeting = (id: string, body: { status: 'accepted' | 'decli
 
 export const listMeetingResponses = (id: string) =>
 	api.get<{ responses: MeetingResponseRow[] }>(`/api/v1/meetings/${id}/responses`);
+
+// --- Конфликты (для UI «Создать вручную») ---
+
+// ConflictEntry — одно перекрытие в выбранном слоте:
+//   - 'meeting'       — пересекающееся событие из календаря (title — название)
+//   - 'exception'     — отпуск/больничный/командировка
+//   - 'outside_hours' — слот вне рабочих часов сотрудника (или выходной)
+// UI рендерит мягко — не блокирует создание, только подсвечивает.
+export interface ConflictEntry {
+	employee_id: string;
+	full_name: string;
+	kind: 'meeting' | 'exception' | 'outside_hours';
+	title: string;
+	start_at: string;
+	end_at: string;
+}
+
+export interface CheckConflictsBody {
+	start_at: string; // ISO с TZ (UTC через toISOString())
+	end_at: string;
+	employee_ids: string[];
+}
+
+export const checkConflicts = (body: CheckConflictsBody) =>
+	api.post<{ conflicts: ConflictEntry[] }>('/api/v1/meetings/check-conflicts', body);

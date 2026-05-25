@@ -1355,14 +1355,9 @@
 
 <div class="page-header">
 	<div>
-		<h1>AI-ассистент</h1>
+		<h1>ИИ-ассистент</h1>
 		<div class="page-header__subtitle">
 			Чат с системой о рабочем времени, доступности, рекомендациях
-			{#if available}
-				<Badge variant="success">GigaChat подключён</Badge>
-			{:else}
-				<Badge variant="warning">rule-based</Badge>
-			{/if}
 		</div>
 	</div>
 	<div class="page-header__actions">

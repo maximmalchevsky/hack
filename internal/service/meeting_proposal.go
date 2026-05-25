@@ -36,6 +36,7 @@ type MeetingProposalService struct {
 	emps          *repository.EmployeeRepo
 	integrations  *repository.IntegrationRepo
 	events        *repository.CalendarEventRepo
+	profiles      *repository.WorkProfileRepo
 	notifications *NotificationService
 	cipher        *crypto.Cipher
 	yandex        *yandex.Provider          // nil если OAuth Яндекса не настроен
@@ -53,6 +54,7 @@ func NewMeetingProposalService(pool *pgxpool.Pool, notif *NotificationService) *
 		emps:          repository.NewEmployeeRepo(pool),
 		integrations:  repository.NewIntegrationRepo(pool),
 		events:        repository.NewCalendarEventRepo(pool),
+		profiles:      repository.NewWorkProfileRepo(pool),
 		notifications: notif,
 	}
 }
@@ -1844,4 +1846,237 @@ func derefUUIDOrZero(p *uuid.UUID) uuid.UUID {
 		return uuid.Nil
 	}
 	return *p
+}
+
+// --- Проверка конфликтов перед ручным созданием встречи ---
+
+// ConflictInfo — один кусок «занятости» сотрудника в заданном слоте.
+//
+// Kind различает тип:
+//   - "meeting"        — пересекающаяся встреча из calendar_events
+//   - "exception"      — отпуск/больничный/командировка/etc
+//   - "outside_hours"  — слот целиком или частично вне рабочих часов сотрудника
+//                        (включая попадание на выходной день по его графику)
+type ConflictInfo struct {
+	EmployeeID uuid.UUID `json:"employee_id"`
+	FullName   string    `json:"full_name"`
+	Kind       string    `json:"kind"`
+	Title      string    `json:"title"`
+	StartAt    time.Time `json:"start_at"`
+	EndAt      time.Time `json:"end_at"`
+}
+
+// CheckConflicts — для заданного временного слота возвращает список конфликтов
+// по каждому сотруднику. Используется UI «Создать вручную», чтобы инициатор
+// видел кто из приглашённых уже занят, и не блокировал создание (мягкое
+// предупреждение, не валидатор).
+//
+// Что считается конфликтом:
+//   - Активное событие в calendar_events (status != cancelled, is_excluded = false),
+//     пересекающееся по времени, КРОМЕ task-блоков планировщика
+//     (Фокус-время / Задача / План задачи — их планировщик подвинет автоматически).
+//   - Активное time_exception (отпуск/больничный/командировка), перекрывающее слот.
+//
+// Дедупликация по emp_id не нужна — в одном слоте у человека может быть несколько
+// событий, все их полезно показать.
+func (s *MeetingProposalService) CheckConflicts(
+	ctx context.Context,
+	startAt, endAt time.Time,
+	empIDs []uuid.UUID,
+) ([]ConflictInfo, error) {
+	if !endAt.After(startAt) {
+		return nil, ErrMeetingInvalidRange
+	}
+	// Фильтр пустого списка — без выборок.
+	cleaned := make([]uuid.UUID, 0, len(empIDs))
+	for _, id := range empIDs {
+		if id != uuid.Nil {
+			cleaned = append(cleaned, id)
+		}
+	}
+	if len(cleaned) == 0 {
+		return []ConflictInfo{}, nil
+	}
+
+	out := make([]ConflictInfo, 0, 8)
+
+	// 1) Календарные события (без task-блоков).
+	rows, err := s.pool.Query(ctx, `
+		SELECT ce.employee_id,
+		       COALESCE(u.full_name, ''),
+		       COALESCE(ce.title, ''),
+		       ce.start_at, ce.end_at
+		FROM calendar_events ce
+		JOIN employees e ON e.id = ce.employee_id
+		JOIN users u ON u.id = e.user_id
+		WHERE ce.employee_id = ANY($1)
+		  AND ce.is_excluded = false
+		  AND ce.status <> 'cancelled'
+		  AND ce.start_at < $3
+		  AND ce.end_at > $2
+		  AND (ce.category IS NULL
+		       OR ce.category NOT IN ('Фокус-время', 'Задача', 'План задачи'))
+	`, cleaned, startAt.UTC(), endAt.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("check conflicts events: %w", err)
+	}
+	for rows.Next() {
+		var c ConflictInfo
+		if err := rows.Scan(&c.EmployeeID, &c.FullName, &c.Title, &c.StartAt, &c.EndAt); err != nil {
+			continue
+		}
+		c.Kind = "meeting"
+		if c.Title == "" {
+			c.Title = "Встреча"
+		}
+		out = append(out, c)
+	}
+	rows.Close()
+
+	// 2) Исключения (отпуск/больничный/командировка) — kind хранится строкой.
+	rows2, err := s.pool.Query(ctx, `
+		SELECT te.employee_id,
+		       COALESCE(u.full_name, ''),
+		       te.kind::text,
+		       COALESCE(te.comment, ''),
+		       te.start_at, te.end_at
+		FROM time_exceptions te
+		JOIN employees e ON e.id = te.employee_id
+		JOIN users u ON u.id = e.user_id
+		WHERE te.employee_id = ANY($1)
+		  AND te.start_at < $3
+		  AND te.end_at > $2
+	`, cleaned, startAt.UTC(), endAt.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("check conflicts exceptions: %w", err)
+	}
+	for rows2.Next() {
+		var (
+			c       ConflictInfo
+			kind    string
+			comment string
+		)
+		if err := rows2.Scan(&c.EmployeeID, &c.FullName, &kind, &comment, &c.StartAt, &c.EndAt); err != nil {
+			continue
+		}
+		c.Kind = "exception"
+		c.Title = exceptionTitle(kind, comment)
+		out = append(out, c)
+	}
+	rows2.Close()
+
+	// 3) Проверка рабочих часов: для каждого сотрудника тянем активный
+	// work_profile, переводим start/end в его TZ, смотрим попадает ли в
+	// окно рабочего дня. Если нет — это «вне графика» (включая выходной).
+	//
+	// Тащим имена одним запросом — иначе для каждого emp пришлось бы делать
+	// отдельный SELECT u.full_name.
+	nameRows, err := s.pool.Query(ctx, `
+		SELECT e.id, COALESCE(u.full_name, '')
+		FROM employees e
+		JOIN users u ON u.id = e.user_id
+		WHERE e.id = ANY($1)
+	`, cleaned)
+	if err == nil {
+		names := map[uuid.UUID]string{}
+		for nameRows.Next() {
+			var id uuid.UUID
+			var n string
+			if err := nameRows.Scan(&id, &n); err == nil {
+				names[id] = n
+			}
+		}
+		nameRows.Close()
+
+		for _, empID := range cleaned {
+			profile, err := s.profiles.Active(ctx, empID)
+			if err != nil || profile == nil {
+				// Нет профиля → ничего не знаем про график → не считаем конфликтом.
+				continue
+			}
+			if oh := workHoursConflict(empID, names[empID], startAt, endAt, profile); oh != nil {
+				out = append(out, *oh)
+			}
+		}
+	}
+
+	return out, nil
+}
+
+// workHoursConflict — проверяет, попадает ли слот [startAt, endAt) в рабочее
+// окно сотрудника по его профилю. Возвращает nil если всё ок, иначе
+// ConflictInfo c kind="outside_hours" и понятным title (выходной/часы).
+func workHoursConflict(empID uuid.UUID, name string, startAt, endAt time.Time, profile *domain.WorkProfile) *ConflictInfo {
+	loc, _ := time.LoadLocation(profile.Timezone)
+	if loc == nil {
+		loc = time.UTC
+	}
+	s := startAt.In(loc)
+	e := endAt.In(loc)
+
+	var dh *domain.DayHours
+	switch s.Weekday() {
+	case time.Monday:
+		dh = profile.DaysOfWeek.Mon
+	case time.Tuesday:
+		dh = profile.DaysOfWeek.Tue
+	case time.Wednesday:
+		dh = profile.DaysOfWeek.Wed
+	case time.Thursday:
+		dh = profile.DaysOfWeek.Thu
+	case time.Friday:
+		dh = profile.DaysOfWeek.Fri
+	case time.Saturday:
+		dh = profile.DaysOfWeek.Sat
+	case time.Sunday:
+		dh = profile.DaysOfWeek.Sun
+	}
+	if dh == nil {
+		// Выходной по графику.
+		return &ConflictInfo{
+			EmployeeID: empID,
+			FullName:   name,
+			Kind:       "outside_hours",
+			Title:      "Выходной день по графику",
+			StartAt:    startAt,
+			EndAt:      endAt,
+		}
+	}
+	// Парсим HH:MM и собираем рабочее окно в этот же день и TZ.
+	ws, err1 := time.ParseInLocation("15:04", dh.Start, loc)
+	we, err2 := time.ParseInLocation("15:04", dh.End, loc)
+	if err1 != nil || err2 != nil {
+		return nil
+	}
+	workStart := time.Date(s.Year(), s.Month(), s.Day(), ws.Hour(), ws.Minute(), 0, 0, loc)
+	workEnd := time.Date(s.Year(), s.Month(), s.Day(), we.Hour(), we.Minute(), 0, 0, loc)
+	if s.Before(workStart) || e.After(workEnd) {
+		return &ConflictInfo{
+			EmployeeID: empID,
+			FullName:   name,
+			Kind:       "outside_hours",
+			Title:      "Вне рабочих часов (" + dh.Start + "–" + dh.End + ")",
+			StartAt:    startAt,
+			EndAt:      endAt,
+		}
+	}
+	return nil
+}
+
+// exceptionTitle — превращает kind+comment в человекочитаемый заголовок.
+func exceptionTitle(kind, comment string) string {
+	label := map[string]string{
+		"vacation":      "Отпуск",
+		"sick":          "Больничный",
+		"business_trip": "Командировка",
+		"personal":      "Личный день",
+		"custom":        "Недоступен",
+	}[kind]
+	if label == "" {
+		label = "Недоступен"
+	}
+	if comment != "" {
+		return label + " — " + comment
+	}
+	return label
 }
