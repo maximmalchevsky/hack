@@ -47,7 +47,7 @@
 			lines.push(`${fmtTime(ev.startAt)}${ev.endAt ? '–' + fmtTime(ev.endAt) : ''}`);
 		}
 		if (ev.subtitle) lines.push(ev.subtitle);
-		if (ev.kind === 'conflict') lines.push('Событие вне рабочих часов');
+		if (ev.kind === 'conflict') lines.push('Пересекается по времени с другим событием');
 		return lines.join('\n');
 	}
 

@@ -420,12 +420,30 @@
 	// с одним другим. Считаем по visibleEvents — те же события, что попали
 	// в виджет «Событий за неделю». Если включён фильтр источников —
 	// конфликты считаются по тому же набору.
+	//
+	// overlapTitlesByID — для каждого id-конфликта храним заголовки событий,
+	// с которыми он пересекается. Используется для tooltip'а на бейдже,
+	// чтобы было видно конкретно с чем накладка.
 	const conflictedIDs = $derived.by(() => {
 		const out = new Set<string>();
+		for (const id of overlapTitlesByID.keys()) out.add(id);
+		return out;
+	});
+
+	const overlapTitlesByID = $derived.by(() => {
+		const out = new Map<string, string[]>();
 		const sorted = [...visibleEvents].sort(
 			(a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime()
 		);
-		// Sweep: для каждого ev сравниваем с тем что началось раньше и ещё не закончилось.
+		const add = (id: string, title: string) => {
+			const cur = out.get(id);
+			if (cur) {
+				if (!cur.includes(title)) cur.push(title);
+			} else {
+				out.set(id, [title]);
+			}
+		};
+		// Sweep: для каждого ev сравниваем с теми что начались раньше и ещё не закончились.
 		for (let i = 0; i < sorted.length; i++) {
 			const a = sorted[i];
 			const aS = new Date(a.start_at).getTime();
@@ -433,16 +451,23 @@
 			for (let j = i + 1; j < sorted.length; j++) {
 				const b = sorted[j];
 				const bS = new Date(b.start_at).getTime();
-				if (bS >= aE) break; // b начинается после конца a → дальше не будет пересечений с a
+				if (bS >= aE) break; // b начинается после конца a → дальше не пересечений с a
 				const bE = new Date(b.end_at).getTime();
 				if (aS < bE && bS < aE) {
-					out.add(a.id);
-					out.add(b.id);
+					add(a.id, b.title || 'без названия');
+					add(b.id, a.title || 'без названия');
 				}
 			}
 		}
 		return out;
 	});
+
+	function overlapTooltip(id: string): string {
+		const titles = overlapTitlesByID.get(id);
+		if (!titles || titles.length === 0) return '';
+		if (titles.length === 1) return `Накладывается на «${titles[0]}»`;
+		return `Накладывается на: «${titles.join('», «')}»`;
+	}
 
 	function fmtHM(d: Date): string {
 		return d.toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
@@ -813,7 +838,9 @@
 										</div>
 										<div class="ev-full__meta">
 											{#if e.kind === 'conflict'}
-												<Badge variant={kindBadge(e.kind)}>вне рабочих часов</Badge>
+												<span title={overlapTooltip(e.id)}>
+													<Badge variant={kindBadge(e.kind)}>пересекается по времени</Badge>
+												</span>
 											{/if}
 											{#if e.attendees && e.attendees > 1}
 												<span class="text-text-3 text-xs">
