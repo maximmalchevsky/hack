@@ -30,6 +30,9 @@
 		type MyMeeting
 	} from '$lib/api/meetings';
 	import { notifyStaleEmployees } from '$lib/api/hr';
+	import { broadcastNotifications, type BroadcastKind } from '$lib/api/notifications';
+	import { getBurnout } from '$lib/api/diagnostics';
+	import { getAnomalies } from '$lib/api/analytics';
 	import { user } from '$lib/stores/user';
 	import { marked } from 'marked';
 
@@ -61,6 +64,7 @@
 		| 'start_reschedule' // «Перенести мою встречу»
 		| 'pick_meeting_to_move' // выбрать какую встречу переносить
 		| 'do_reschedule' // финальный перенос (payload.meeting_id + start/end)
+		| 'broadcast_notify' // массовая рассылка burnout/overload/anomaly/stale_profile
 		| 'navigate'; // переход на страницу системы (payload.href)
 
 	interface MsgAction {
@@ -280,6 +284,13 @@
 		}
 		if (overload) {
 			out.push({
+				label: 'Разослать уведомление',
+				variant: 'primary',
+				icon: 'ti-send',
+				kind: 'broadcast_notify',
+				payload: { broadcast_kind: 'overload' }
+			});
+			out.push({
 				label: 'Аналитика',
 				variant: 'ghost',
 				icon: 'ti-chart-line',
@@ -340,8 +351,15 @@
 		}
 		if (burnout) {
 			out.push({
-				label: 'Зона выгорания',
+				label: 'Разослать уведомление',
 				variant: 'primary',
+				icon: 'ti-send',
+				kind: 'broadcast_notify',
+				payload: { broadcast_kind: 'burnout' }
+			});
+			out.push({
+				label: 'Зона выгорания',
+				variant: 'ghost',
 				icon: 'ti-flame',
 				kind: 'navigate',
 				payload: { href: '/diagnostics' }
@@ -357,6 +375,13 @@
 			});
 		}
 		if (anomaly) {
+			out.push({
+				label: 'Разослать уведомление',
+				variant: 'primary',
+				icon: 'ti-send',
+				kind: 'broadcast_notify',
+				payload: { broadcast_kind: 'anomaly' }
+			});
 			out.push({
 				label: 'Аномальная активность',
 				variant: 'ghost',
@@ -687,6 +712,9 @@
 			case 'do_reschedule':
 				await flowRescheduleApply(action.payload);
 				break;
+			case 'broadcast_notify':
+				await flowBroadcastNotify(action.payload?.broadcast_kind as BroadcastKind);
+				break;
 			case 'navigate':
 				if (action.payload?.href && typeof window !== 'undefined') {
 					window.location.href = action.payload.href as string;
@@ -696,6 +724,72 @@
 
 		await tick();
 		scrollDown();
+	}
+
+	// flowBroadcastNotify — массовая рассылка in-app уведомлений по сценарию.
+	// 1) Тянем актуальный список emp_ids из соответствующего endpoint'а.
+	// 2) Шлём POST /notifications/broadcast.
+	// 3) Печатаем результат в чат — «Отправил N уведомлений / N пропущено».
+	async function flowBroadcastNotify(kind: BroadcastKind) {
+		let empIDs: string[] = [];
+		try {
+			if (kind === 'burnout' || kind === 'overload') {
+				// Burnout-детектор уже учитывает и overload (высокая L), и стресс
+				// (высокая C). Для overload и burnout берём один и тот же список.
+				const r = await getBurnout();
+				empIDs = (r.burnout ?? []).map((b) => b.employee_id);
+			} else if (kind === 'anomaly') {
+				const r = await getAnomalies();
+				// Берём уникальные emp_id — за 30 дней один человек может быть в нескольких аномалиях.
+				const seen = new Set<string>();
+				empIDs = (r.anomalies ?? [])
+					.map((a) => a.employee_id)
+					.filter((id) => (seen.has(id) ? false : (seen.add(id), true)));
+			} else if (kind === 'stale_profile') {
+				// stale-сценарий уже покрыт flowNotifyStaleRun — на всякий случай
+				// не дублируем рассылку, просто говорим.
+				messages.push(
+					newMsg({
+						role: 'assistant',
+						content: 'Для рассылки по устаревшим профилям используй кнопку «Разослать запросы устаревшим» — она шлёт более подробное письмо.'
+					})
+				);
+				return;
+			}
+		} catch (e) {
+			messages.push(
+				newMsg({ role: 'assistant', content: `Не удалось получить список: ${errStr(e)}` })
+			);
+			return;
+		}
+
+		if (empIDs.length === 0) {
+			messages.push(
+				newMsg({ role: 'assistant', content: 'Сейчас никого нет в этой категории — рассылать некому.' })
+			);
+			return;
+		}
+
+		try {
+			const r = await broadcastNotifications(kind, empIDs);
+			const parts: string[] = [];
+			parts.push(`Отправил ${r.sent} ${pluralRu(r.sent, ['уведомление', 'уведомления', 'уведомлений'])}`);
+			if (r.skipped > 0) parts.push(`пропустил ${r.skipped} (получали такое же за сутки)`);
+			messages.push(newMsg({ role: 'assistant', content: parts.join(' · ') + '.' }));
+		} catch (e) {
+			messages.push(
+				newMsg({ role: 'assistant', content: `Не удалось разослать: ${errStr(e)}` })
+			);
+		}
+	}
+
+	// pluralRu(2, ['яблоко','яблока','яблок']) → 'яблока'
+	function pluralRu(n: number, forms: [string, string, string]): string {
+		const m10 = n % 10;
+		const m100 = n % 100;
+		if (m10 === 1 && m100 !== 11) return forms[0];
+		if (m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20)) return forms[1];
+		return forms[2];
 	}
 
 	async function flowChooseTeam() {

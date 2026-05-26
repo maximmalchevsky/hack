@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -227,6 +228,138 @@ func priorityRank(p string) int {
 	default:
 		return 0
 	}
+}
+
+// --- Batch-уведомления по сценарию (для ИИ-ассистента) ---
+
+// NotifyBatchResult — счётчики после рассылки.
+type NotifyBatchResult struct {
+	Sent     int      `json:"sent"`
+	Skipped  int      `json:"skipped"`
+	Targeted int      `json:"targeted"`
+	Emails   []string `json:"emails,omitempty"`
+}
+
+// notifyTemplates — шаблоны title/body/link по kind. Используются в
+// NotifyByKind, чтобы фронт/ИИ не передавали полный текст, а указали только
+// семантику ситуации (burnout/overload/anomaly/stale_profile).
+var notifyTemplates = map[string]struct {
+	title string
+	body  string
+	link  string
+}{
+	"burnout": {
+		title: "Высокая нагрузка — посмотри график",
+		body:  "Система отметила тебя в зоне риска выгорания. Зайди в /workload и проверь нагрузку — возможно стоит перенести часть встреч.",
+		link:  "/workload",
+	},
+	"overload": {
+		title: "Перегруз по задачам",
+		body:  "В плане задач не хватает времени до дедлайнов. Зайди в /tasks и пересмотри оценки или сроки.",
+		link:  "/tasks",
+	},
+	"anomaly": {
+		title: "Необычная активность",
+		body:  "В последние дни активность сильно отличается от обычного ритма. Проверь свой график в /profile — возможно его пора обновить.",
+		link:  "/profile",
+	},
+	"stale_profile": {
+		title: "Пожалуйста, обнови рабочий график",
+		body:  "Профиль давно не обновлялся. Зайди в /profile и подтверди актуальные рабочие часы.",
+		link:  "/profile",
+	},
+}
+
+// NotifyByKind — для каждого employee_id находит user_id и шлёт ему in-app
+// notification по шаблону kind. Дедуп: если в последние 24 часа уже было
+// такое же kind для того же user — пропускаем.
+func (s *NotificationService) NotifyByKind(
+	ctx context.Context,
+	kind string,
+	empIDs []uuid.UUID,
+	initiatorUser uuid.UUID,
+) (*NotifyBatchResult, error) {
+	tpl, ok := notifyTemplates[kind]
+	if !ok {
+		return nil, fmt.Errorf("notify: unknown kind %q", kind)
+	}
+	if len(empIDs) == 0 {
+		return &NotifyBatchResult{}, nil
+	}
+
+	// emp → user + email одним запросом.
+	rows, err := s.pool.Query(ctx, `
+		SELECT u.id, COALESCE(u.email, '')
+		FROM employees e
+		JOIN users u ON u.id = e.user_id
+		WHERE e.id = ANY($1)
+	`, empIDs)
+	if err != nil {
+		return nil, err
+	}
+	type rec struct {
+		userID uuid.UUID
+		email  string
+	}
+	var cands []rec
+	for rows.Next() {
+		var r rec
+		if err := rows.Scan(&r.userID, &r.email); err != nil {
+			continue
+		}
+		cands = append(cands, r)
+	}
+	rows.Close()
+
+	// Дедуп: кому уже слали этот же kind за последние 24ч.
+	recent := map[uuid.UUID]struct{}{}
+	if len(cands) > 0 {
+		ids := make([]uuid.UUID, 0, len(cands))
+		for _, c := range cands {
+			ids = append(ids, c.userID)
+		}
+		dr, derr := s.pool.Query(ctx, `
+			SELECT user_id FROM notifications
+			WHERE kind = $1
+			  AND user_id = ANY($2)
+			  AND created_at > now() - interval '24 hours'
+		`, kind, ids)
+		if derr == nil {
+			for dr.Next() {
+				var u uuid.UUID
+				if scanErr := dr.Scan(&u); scanErr == nil {
+					recent[u] = struct{}{}
+				}
+			}
+			dr.Close()
+		}
+	}
+
+	res := &NotifyBatchResult{Targeted: len(cands)}
+	for _, c := range cands {
+		if _, dup := recent[c.userID]; dup {
+			res.Skipped++
+			continue
+		}
+		_, err := s.Push(ctx, CreateInput{
+			UserID: c.userID,
+			Kind:   kind,
+			Title:  tpl.title,
+			Body:   tpl.body,
+			Link:   tpl.link,
+			Payload: map[string]any{
+				"initiator_id": initiatorUser.String(),
+			},
+		})
+		if err != nil {
+			continue
+		}
+		res.Sent++
+		if c.email != "" {
+			res.Emails = append(res.Emails, c.email)
+		}
+	}
+	return res, nil
 }
 
 func notificationToMap(n domain.Notification) map[string]any {

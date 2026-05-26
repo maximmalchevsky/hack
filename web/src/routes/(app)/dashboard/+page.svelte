@@ -406,12 +406,43 @@
 		return result;
 	}
 
+	// kindFor — определяет тип события для бейджей/иконок в таймлайне.
+	// Конфликт = пересечение по времени с другим событием того же сотрудника
+	// (double-booking). Считается через множество conflictedIDs ниже —
+	// чтобы один и тот же event помечался как 'conflict' на всех его
+	// отображениях.
 	function kindFor(ev: CalendarEvent): TimelineEventKind {
-		const startH = new Date(ev.start_at).getHours();
-		const endH = new Date(ev.end_at).getHours();
-		if (startH < 8 || endH > 20) return 'conflict';
+		if (conflictedIDs.has(ev.id)) return 'conflict';
 		return ev.attendees_count && ev.attendees_count > 1 ? 'meeting' : 'task';
 	}
+
+	// conflictedIDs — множество id событий, которые пересекаются хотя бы
+	// с одним другим. Считаем по visibleEvents — те же события, что попали
+	// в виджет «Событий за неделю». Если включён фильтр источников —
+	// конфликты считаются по тому же набору.
+	const conflictedIDs = $derived.by(() => {
+		const out = new Set<string>();
+		const sorted = [...visibleEvents].sort(
+			(a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime()
+		);
+		// Sweep: для каждого ev сравниваем с тем что началось раньше и ещё не закончилось.
+		for (let i = 0; i < sorted.length; i++) {
+			const a = sorted[i];
+			const aS = new Date(a.start_at).getTime();
+			const aE = new Date(a.end_at).getTime();
+			for (let j = i + 1; j < sorted.length; j++) {
+				const b = sorted[j];
+				const bS = new Date(b.start_at).getTime();
+				if (bS >= aE) break; // b начинается после конца a → дальше не будет пересечений с a
+				const bE = new Date(b.end_at).getTime();
+				if (aS < bE && bS < aE) {
+					out.add(a.id);
+					out.add(b.id);
+				}
+			}
+		}
+		return out;
+	});
 
 	function fmtHM(d: Date): string {
 		return d.toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
@@ -518,7 +549,10 @@
 			return acc + ms / (1000 * 60 * 60);
 		}, 0)
 	);
-	const conflictsCount = $derived(visibleEvents.filter((e) => kindFor(e) === 'conflict').length);
+	// Конфликтов = сколько событий пересекаются хотя бы с одним другим.
+	// Каждое такое событие считаем один раз, чтобы число читалось как
+	// «у меня X встреч в double-booking», а не «X пар пересечений».
+	const conflictsCount = $derived(conflictedIDs.size);
 </script>
 
 <div class="page-header">

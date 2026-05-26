@@ -30,8 +30,46 @@ func (h *NotificationHandler) Mount(r fiber.Router) {
 	g.Get("/", h.list)
 	g.Get("/count", h.countUnread)
 	g.Get("/stream", h.sse)
+	g.Post("/broadcast", h.broadcast)
 	g.Post("/:id/read", h.markRead)
 	g.Post("/read-all", h.markAllRead)
+}
+
+// broadcastRequest — body для POST /notifications/broadcast.
+// Используется action-кнопкой «Разослать» в ИИ-ассистенте для рассылок
+// по сценариям burnout/overload/anomaly/stale_profile.
+type broadcastRequest struct {
+	Kind        string      `json:"kind"`
+	EmployeeIDs []uuid.UUID `json:"employee_ids"`
+}
+
+// broadcast — массовая рассылка in-app уведомлений группе сотрудников.
+// RBAC: manager / pm / hr / admin. Эмплои не могут рассылать сами себе и другим.
+// Дедуп внутри service: тот же kind тому же user'у не чаще раза в 24ч.
+func (h *NotificationHandler) broadcast(c fiber.Ctx) error {
+	role := middleware.CurrentRole(c)
+	switch role {
+	case domain.RoleManager, domain.RolePM, domain.RoleHR, domain.RoleAdmin:
+		// ok
+	default:
+		return fiber.NewError(fiber.StatusForbidden, "only manager/pm/hr/admin")
+	}
+	var req broadcastRequest
+	if err := json.Unmarshal(c.Body(), &req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
+	}
+	if req.Kind == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "kind required")
+	}
+	if len(req.EmployeeIDs) == 0 {
+		return c.JSON(fiber.Map{"sent": 0, "skipped": 0, "targeted": 0})
+	}
+
+	res, err := h.svc.NotifyByKind(c.Context(), req.Kind, req.EmployeeIDs, middleware.UserID(c))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	return c.JSON(res)
 }
 
 func (h *NotificationHandler) list(c fiber.Ctx) error {
