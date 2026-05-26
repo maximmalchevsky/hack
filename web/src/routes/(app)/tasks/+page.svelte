@@ -283,7 +283,7 @@
 								/>
 								<span class="t-estimate__unit">ч</span>
 								{#if est.source === 'ai'}
-									<span class="t-estimate__badge t-estimate__badge--ai" title="Оценил GigaChat">
+									<span class="t-estimate__badge t-estimate__badge--ai" title="Оценил ИИ-ассистент">
 										<i class="ti ti-sparkles"></i>
 									</span>
 								{:else if est.source === 'default'}

@@ -559,7 +559,7 @@
 					{#if summary.generated_by === 'ai'}
 						<div class="weekly__footer">
 							<i class="ti ti-sparkles"></i>
-							<span>Сгенерировано GigaChat</span>
+							<span>Сгенерировано ИИ-ассистентом</span>
 						</div>
 					{/if}
 				</div>

@@ -152,7 +152,7 @@
 			messages.push(
 				newMsg({
 					role: 'assistant',
-					content: 'GigaChat не настроен. Ответы формируются rule-based генератором.'
+					content: 'ИИ-ассистент сейчас недоступен — отвечаю по встроенным правилам.'
 				})
 			);
 		}

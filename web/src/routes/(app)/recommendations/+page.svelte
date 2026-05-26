@@ -231,7 +231,7 @@
 						<Badge variant={priorityVariant(r.priority)}>{priorityLabel(r.priority)}</Badge>
 						<div class="card__title">{r.title}</div>
 						<Badge variant={r.generated_by === 'ai' ? 'info' : 'neutral'}>
-							{r.generated_by === 'ai' ? '✨ GigaChat' : 'По шаблону'}
+							{r.generated_by === 'ai' ? '✨ ИИ-ассистент' : 'По шаблону'}
 						</Badge>
 					</div>
 					{#if r.employee && activeTab !== 'mine'}
@@ -281,7 +281,7 @@
 					{#if r.generated_by === 'ai'}
 						<div class="rec__footer">
 							<i class="ti ti-sparkles"></i>
-							<span>Сгенерировано GigaChat</span>
+							<span>Сгенерировано ИИ-ассистентом</span>
 						</div>
 					{/if}
 				</div>
