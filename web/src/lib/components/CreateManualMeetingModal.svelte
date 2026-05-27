@@ -66,10 +66,18 @@
 	let formError = $state<string | null>(null);
 	let teamsLoading = $state(false);
 
-	// --- Sane defaults: при открытии заполняем дату/время «через 30 минут от сейчас». ---
+	// initialized — флаг «дефолты уже выставлены в текущей сессии открытия».
+	// Без него $effect для defaults читал бы date/timeHM, и при каждом изменении
+	// этих полей (включая «стереть и перенабрать») эффект снова ставил их в
+	// «сейчас + 30 мин». Из-за этого окно дёргалось и даты сбрасывались.
+	// Reset происходит при закрытии — в onClose-обвязке через $effect ниже.
+	let initialized = $state(false);
+
+	// --- Sane defaults: при первом открытии заполняем дату/время «через 30 минут от сейчас». ---
 	$effect(() => {
 		if (!open) return;
-		if (date && timeHM) return; // не перезаписываем если пользователь уже что-то ввёл
+		if (initialized) return;
+		initialized = true;
 
 		const d = new Date();
 		// Округляем до следующей половины часа (или часа).
@@ -84,6 +92,13 @@
 		}
 		date = ymd(d);
 		timeHM = hm(d);
+	});
+
+	// При закрытии окна сбрасываем initialized — следующее открытие пересчитает дефолты.
+	$effect(() => {
+		if (!open && initialized) {
+			initialized = false;
+		}
 	});
 
 	// --- Загрузка команд при первом открытии. ---
