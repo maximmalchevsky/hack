@@ -80,6 +80,19 @@ export interface ConflictEntry {
 	end_at: string;
 }
 
+// OverloadEntry — анти-burnout: у сотрудника после новой встречи количество
+// часов встреч на неделе превысит порог (35ч). Не блокирует создание, но
+// требует явного подтверждения в UI.
+export interface OverloadEntry {
+	employee_id: string;
+	full_name: string;
+	current_hours: number;
+	projected_hours: number;
+	limit: number;
+	week_start: string;
+	week_end: string;
+}
+
 export interface CheckConflictsBody {
 	start_at: string; // ISO с TZ (UTC через toISOString())
 	end_at: string;
@@ -87,4 +100,7 @@ export interface CheckConflictsBody {
 }
 
 export const checkConflicts = (body: CheckConflictsBody) =>
-	api.post<{ conflicts: ConflictEntry[] }>('/api/v1/meetings/check-conflicts', body);
+	api.post<{ conflicts: ConflictEntry[]; overload: OverloadEntry[] }>(
+		'/api/v1/meetings/check-conflicts',
+		body
+	);

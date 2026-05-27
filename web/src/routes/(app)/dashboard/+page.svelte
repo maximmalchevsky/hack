@@ -469,6 +469,18 @@
 		return `Накладывается на: «${titles.join('», «')}»`;
 	}
 
+	// overlapBadgeLabel — текст для бейджа конфликта.
+	// Если 1 пересечение → «пересекается с «Архитектурный»».
+	// Если 2 → «пересекается с «А», «Б»».
+	// Если 3+ → «пересекается с «А» и ещё N» (полный список — в tooltip).
+	function overlapBadgeLabel(id: string): string {
+		const titles = overlapTitlesByID.get(id);
+		if (!titles || titles.length === 0) return 'пересекается по времени';
+		if (titles.length === 1) return `пересекается с «${titles[0]}»`;
+		if (titles.length === 2) return `пересекается с «${titles[0]}», «${titles[1]}»`;
+		return `пересекается с «${titles[0]}» и ещё ${titles.length - 1}`;
+	}
+
 	function fmtHM(d: Date): string {
 		return d.toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
 	}
@@ -839,7 +851,7 @@
 										<div class="ev-full__meta">
 											{#if e.kind === 'conflict'}
 												<span title={overlapTooltip(e.id)}>
-													<Badge variant={kindBadge(e.kind)}>пересекается по времени</Badge>
+													<Badge variant={kindBadge(e.kind)}>{overlapBadgeLabel(e.id)}</Badge>
 												</span>
 											{/if}
 											{#if e.attendees && e.attendees > 1}

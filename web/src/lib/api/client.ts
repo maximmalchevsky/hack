@@ -35,7 +35,12 @@ export function clearTokens() {
 export class ApiError extends Error {
 	constructor(
 		public status: number,
-		message: string
+		message: string,
+		// payload — JSON-тело ответа, если оно было parseable. Используется
+		// в кейсах вроде 409 от /propose-meeting, где сервер возвращает
+		// {error: "overload", overload: [...]} и фронту нужны эти данные
+		// чтобы показать confirm-диалог.
+		public payload?: unknown
 	) {
 		super(message);
 	}
@@ -100,13 +105,15 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
 
 	if (!res.ok) {
 		let msg = `request failed: ${res.status}`;
+		let payload: unknown;
 		try {
 			const body = await res.json();
+			payload = body;
 			if (body && typeof body.error === 'string') msg = body.error;
 		} catch {
 			// ignore
 		}
-		throw new ApiError(res.status, msg);
+		throw new ApiError(res.status, msg, payload);
 	}
 
 	if (res.status === 204) return undefined as T;

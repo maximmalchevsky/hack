@@ -23,7 +23,7 @@
 		MEETING_CATEGORIES,
 		type Team
 	} from '$lib/api/teams';
-	import { checkConflicts, type ConflictEntry } from '$lib/api/meetings';
+	import { checkConflicts, type ConflictEntry, type OverloadEntry } from '$lib/api/meetings';
 	import { ApiError } from '$lib/api/client';
 
 	interface Props {
@@ -60,6 +60,7 @@
 
 	// Конфликты + статус submit.
 	let conflicts = $state<ConflictEntry[]>([]);
+	let overload = $state<OverloadEntry[]>([]);
 	let conflictsChecking = $state(false);
 	let submitting = $state(false);
 	let formError = $state<string | null>(null);
@@ -249,6 +250,7 @@
 		if (!open) return;
 		if (!startISO || !endISO || targetEmpIDs.length === 0) {
 			conflicts = [];
+			overload = [];
 			return;
 		}
 		// Снимок текущих значений для замыкания.
@@ -262,9 +264,11 @@
 			try {
 				const r = await checkConflicts({ start_at: s, end_at: e, employee_ids: ids });
 				conflicts = r.conflicts ?? [];
+				overload = r.overload ?? [];
 			} catch {
 				// Тихо: проверка не критична, основной flow всё равно работает.
 				conflicts = [];
+				overload = [];
 			} finally {
 				conflictsChecking = false;
 			}
@@ -273,6 +277,27 @@
 
 	async function onSubmit() {
 		if (!canSubmit) return;
+
+		// Анти-burnout soft-block: если у кого-то будет перегруз — спросим
+		// явное подтверждение перед отправкой запроса. Бэк всё равно сделает
+		// свою проверку и при отсутствии force вернёт 409 (страховка от
+		// stale-данных, если конфликты изменились между check-conflicts и submit).
+		let force = false;
+		if (overload.length > 0) {
+			const lines = overload.map(
+				(o) =>
+					`• ${o.full_name}: ${o.current_hours} ч → ${o.projected_hours} ч (порог ${o.limit})`
+			);
+			const msg =
+				`После этой встречи у ${overload.length} участников будет больше ${WeeklyMeetingHoursLimit} ч встреч на неделе:\n\n` +
+				lines.join('\n') +
+				'\n\nВсё равно создать?';
+			if (!confirm(msg)) {
+				return;
+			}
+			force = true;
+		}
+
 		submitting = true;
 		formError = null;
 		try {
@@ -285,7 +310,8 @@
 					title: titleTrim || defaultTitle,
 					category: category || undefined,
 					employee_ids: crossFinalEmpIDs,
-					primary_team_id: crossTeamIDs[0] || undefined
+					primary_team_id: crossTeamIDs[0] || undefined,
+					force
 				});
 			} else {
 				const team = teams.find((t) => t.id === teamID);
@@ -293,7 +319,8 @@
 					start_at: startISO,
 					end_at: endISO,
 					title: titleTrim || `Встреча команды «${team?.name ?? ''}»`,
-					category: category || undefined
+					category: category || undefined,
+					force
 				});
 			}
 			// Закрываем + дергаем родителя.
@@ -301,11 +328,30 @@
 			onCreated();
 			onClose();
 		} catch (e) {
-			formError = e instanceof ApiError ? e.message : String(e);
+			// Если бэк прислал 409 overload (хоть мы и проверяли через check-conflicts —
+			// данные могли устареть за секунды), берём конкретику из payload и
+			// показываем пользователю повторный confirm.
+			if (
+				e instanceof ApiError &&
+				e.status === 409 &&
+				e.payload &&
+				typeof e.payload === 'object' &&
+				'overload' in e.payload
+			) {
+				const list = (e.payload as { overload?: OverloadEntry[] }).overload ?? [];
+				overload = list;
+				formError = `У ${list.length} участников будет перегруз — подтверди ещё раз.`;
+			} else {
+				formError = e instanceof ApiError ? e.message : String(e);
+			}
 		} finally {
 			submitting = false;
 		}
 	}
+
+	// WeeklyMeetingHoursLimit — продублирован на фронте только для текста
+	// в confirm-диалоге. Реальный порог проверяется на бэке (см. service).
+	const WeeklyMeetingHoursLimit = 35;
 
 	function resetForm() {
 		title = '';
@@ -314,6 +360,7 @@
 		timeHM = '';
 		durationMin = 60;
 		conflicts = [];
+		overload = [];
 		crossExcluded = new Set();
 		formError = null;
 		// teamID/crossTeamIDs/cache оставляем — пользователь часто открывает
@@ -553,10 +600,30 @@
 							</li>
 						{/each}
 					</ul>
-					<div class="text-text-3 text-xs">
-						Это мягкое предупреждение — встречу всё равно можно создать.
-					</div>
 				{/if}
+			</div>
+		{/if}
+
+		<!-- Анти-burnout: после этой встречи у кого-то >35ч/неделю. Не блокирует
+		     submit, но onSubmit спросит явное подтверждение перед force=true. -->
+		{#if overload.length > 0}
+			<div class="overload">
+				<div class="overload__head">
+					<i class="ti ti-flame" style="color: var(--danger-strong);"></i>
+					Перегруз по встречам у {overload.length}
+					{overload.length === 1 ? 'участника' : 'участников'}:
+				</div>
+				<ul class="overload__list">
+					{#each overload as o (o.employee_id)}
+						<li class="overload__row">
+							<span class="overload__name">{o.full_name}</span>
+							<span class="overload__hours">
+								{o.current_hours} ч → <strong>{o.projected_hours} ч</strong>
+								<span class="text-text-3 text-xs">(порог {o.limit} ч)</span>
+							</span>
+						</li>
+					{/each}
+				</ul>
 			</div>
 		{/if}
 	</div>
@@ -747,5 +814,43 @@
 	.conflicts__title {
 		color: var(--text);
 		font-weight: 500;
+	}
+	.overload {
+		padding: 10px 12px;
+		border-radius: 8px;
+		background: var(--danger-bg);
+		border: 0.5px solid var(--danger-text);
+		font-size: 13px;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.overload__head {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		color: var(--danger-strong);
+		font-weight: 600;
+	}
+	.overload__list {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.overload__row {
+		display: flex;
+		gap: 8px;
+		color: var(--text-2);
+	}
+	.overload__name {
+		font-weight: 600;
+		color: var(--text);
+		min-width: 140px;
+	}
+	.overload__hours {
+		color: var(--text-2);
 	}
 </style>

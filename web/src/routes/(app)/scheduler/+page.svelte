@@ -408,6 +408,16 @@
 		}
 	}
 
+	// OverloadEntry — продублирован из api/meetings.ts (но мы туда импорт
+	// не тянем чтобы не плодить циклы) — содержит инфу для confirm-диалога.
+	type OverloadEntry = {
+		employee_id: string;
+		full_name: string;
+		current_hours: number;
+		projected_hours: number;
+		limit: number;
+	};
+
 	async function create(w: MeetingWindow) {
 		// Предупреждение если кому-то это будет вне его графика.
 		const offHours = w.unavailable.filter((p) => p.reason === 'outside_hours');
@@ -422,29 +432,65 @@
 		creatingKey = key;
 		error = null;
 		success = null;
-		try {
-			let r;
-			if (crossMode) {
-				const defaultTitle = `Межкомандная встреча (${crossFinalEmpIDs.length} участников)`;
-				r = await proposeCrossMeeting({
-					start_at: w.start_at,
-					end_at: w.end_at,
-					title: meetingTitle.trim() || defaultTitle,
-					category: meetingCategory || undefined,
-					employee_ids: crossFinalEmpIDs,
-					primary_team_id: crossTeamIDs[0] || undefined
-				});
-			} else {
-				if (!selectedTeamID) return;
+
+		// tryPropose — отправляет запрос с заданным force. При 409 с overload
+		// показывает confirm-диалог и (если пользователь согласен) рекурсивно
+		// вызывает себя с force=true.
+		const tryPropose = async (force: boolean): Promise<{ sent: number; yandex_pushed?: number } | null> => {
+			try {
+				if (crossMode) {
+					const defaultTitle = `Межкомандная встреча (${crossFinalEmpIDs.length} участников)`;
+					return await proposeCrossMeeting({
+						start_at: w.start_at,
+						end_at: w.end_at,
+						title: meetingTitle.trim() || defaultTitle,
+						category: meetingCategory || undefined,
+						employee_ids: crossFinalEmpIDs,
+						primary_team_id: crossTeamIDs[0] || undefined,
+						force
+					});
+				}
+				if (!selectedTeamID) return null;
 				const team = teams.find((t) => t.id === selectedTeamID);
 				const teamName = team?.name ?? '';
-				r = await proposeMeeting(selectedTeamID, {
+				return await proposeMeeting(selectedTeamID, {
 					start_at: w.start_at,
 					end_at: w.end_at,
 					title: meetingTitle.trim() || `Встреча команды «${teamName}»`,
-					category: meetingCategory || undefined
+					category: meetingCategory || undefined,
+					force
 				});
+			} catch (e) {
+				// 409 + payload.overload → confirm и повтор с force=true.
+				if (
+					!force &&
+					e instanceof ApiError &&
+					e.status === 409 &&
+					e.payload &&
+					typeof e.payload === 'object' &&
+					'overload' in e.payload
+				) {
+					const list = ((e.payload as { overload?: OverloadEntry[] }).overload ?? []);
+					const lines = list.map(
+						(o) =>
+							`• ${o.full_name}: ${o.current_hours} ч → ${o.projected_hours} ч (порог ${o.limit})`
+					);
+					const msg =
+						`После этой встречи у ${list.length} участников будет перегруз:\n\n` +
+						lines.join('\n') +
+						'\n\nВсё равно создать?';
+					if (confirm(msg)) {
+						return await tryPropose(true);
+					}
+					return null;
+				}
+				throw e;
 			}
+		};
+
+		try {
+			const r = await tryPropose(false);
+			if (!r) return; // пользователь отменил или нет team_id
 			createdKeys = new Set(createdKeys).add(key);
 			const parts = [`Уведомление отправлено ${r.sent} участникам`];
 			if (r.yandex_pushed && r.yandex_pushed > 0) {

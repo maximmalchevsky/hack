@@ -158,7 +158,14 @@ export type MeetingCategory = (typeof MEETING_CATEGORIES)[number];
 
 export const proposeMeeting = (
 	teamID: string,
-	body: { start_at: string; end_at: string; title?: string; category?: string; invitee_emp_ids?: string[] }
+	body: {
+		start_at: string;
+		end_at: string;
+		title?: string;
+		category?: string;
+		invitee_emp_ids?: string[];
+		force?: boolean;
+	}
 ) => api.post<ProposeMeetingResult>(`/api/v1/teams/${teamID}/propose-meeting`, body);
 
 // --- Cross-team meetings ---
@@ -187,4 +194,5 @@ export const proposeCrossMeeting = (body: {
 	category?: string;
 	employee_ids: string[];
 	primary_team_id?: string;
+	force?: boolean;
 }) => api.post<ProposeMeetingResult>('/api/v1/cross-team-meetings/propose', body);

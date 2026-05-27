@@ -845,7 +845,7 @@
 		try {
 			const r = await findWindow(teamID, {
 				duration_min: flowDurationMin,
-				days: 7,
+				days: 14,
 				top_n: 3
 			});
 			windows = r.windows ?? [];
@@ -1096,7 +1096,7 @@
 		try {
 			const r = await findWindow(m.team_id, {
 				duration_min: durationMin,
-				days: 7,
+				days: 14,
 				top_n: 5
 			});
 			windows = r.windows ?? [];
