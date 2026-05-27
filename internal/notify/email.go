@@ -42,6 +42,10 @@ func NewEmailTransport(host string, port int, user, pass, from, baseURL string, 
 func (t *EmailTransport) Name() string  { return "email" }
 func (t *EmailTransport) Enabled() bool { return !t.disabled }
 
+// From — возвращает сырой from-адрес транспорта (вместе с display-name если есть).
+// Используется как fallback для ORGANIZER в .ics когда IMIP_REPLY_TO не задан.
+func (t *EmailTransport) From() string { return t.from }
+
 func (t *EmailTransport) Send(ctx context.Context, msg Message) error {
 	if t.disabled {
 		return errors.New("email transport disabled")
@@ -57,11 +61,15 @@ func (t *EmailTransport) Send(ctx context.Context, msg Message) error {
 	}
 	body := buildEmailBody(t.baseURL, msg)
 	headers := map[string]string{
-		"From":         t.from,
-		"To":           msg.UserEmail,
-		"Subject":      mimeEncode(subj),
-		"MIME-Version": "1.0",
-		"Content-Type": `text/html; charset="utf-8"`,
+		"From":                      t.from,
+		"To":                        msg.UserEmail,
+		"Subject":                   mimeEncode(subj),
+		"MIME-Version":              "1.0",
+		"Content-Type":              `text/html; charset="utf-8"`,
+		// 8bit обязателен — без него получатель видит mojibake вроде
+		// «ÐÑÑÑÐµÑÐ°» вместо «Встреча». Все наши SMTP (Yandex/Gmail/Mail.ru)
+		// поддерживают 8BITMIME extension.
+		"Content-Transfer-Encoding": "8bit",
 	}
 	var sb strings.Builder
 	for k, v := range headers {
@@ -134,7 +142,6 @@ func buildEmailBody(baseURL string, msg Message) string {
 	if link != "" {
 		sb.WriteString(`<a href="` + link + `" style="display:inline-block;background:#3b82f6;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;font-size:13px;">Открыть в системе</a>`)
 	}
-	sb.WriteString(`<div style="margin-top:18px;font-size:11px;color:#94a3b8;">Это автоматическое письмо. Чтобы отключить — отключи email в /profile.</div>`)
 	sb.WriteString(`</div></body></html>`)
 	return sb.String()
 }

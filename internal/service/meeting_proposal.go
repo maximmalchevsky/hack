@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/rs/zerolog/log"
 
 	"worktimesync/internal/domain"
 	"worktimesync/internal/integrations"
@@ -67,11 +68,23 @@ func (s *MeetingProposalService) WithYandex(p *yandex.Provider, cipher *crypto.C
 }
 
 // WithIMIP — DI: подключаем SMTP-транспорт для рассылки .ics-инвайтов.
-// Если enabled=false или replyTo пустой — инвайты не шлём.
+//
+// Раньше требовали все три условия: enabled=true && replyTo!="" && SMTP.
+// Это создавало тихий gotcha: без IMIP_ENABLED=true инвайты не уходили вообще.
+// Сейчас: если SMTP работает — инвайты шлём. IMIP_ENABLED отвечает только за
+// IMAP-приёмник ответов (он отдельный сервис, см. cmd/worker). Шлём .ics
+// независимо: получатель увидит кнопки Accept/Decline в Gmail/Apple Mail.
+// Reply-To берём из переданного replyTo, иначе из From (для демо хватит).
 func (s *MeetingProposalService) WithIMIP(email *notify.EmailTransport, replyTo string, enabled bool) *MeetingProposalService {
 	s.email = email
 	s.imipReplyTo = strings.TrimSpace(replyTo)
-	s.imipEnabled = enabled && s.imipReplyTo != "" && email != nil && email.Enabled()
+	s.imipEnabled = email != nil && email.Enabled()
+	if !s.imipEnabled {
+		log.Warn().Msg("imip: SMTP transport disabled — .ics invites won't be sent")
+	} else if s.imipReplyTo == "" {
+		log.Warn().Msg("imip: IMIP_REPLY_TO empty — RSVP-ответы не будут собраны IMAP-листенером, .ics уйдут с From как Reply-To")
+	}
+	_ = enabled // оставляем сигнатуру совместимой; флаг используется в воркере для запуска IMAP-poller
 	return s
 }
 
@@ -117,6 +130,9 @@ func (s *MeetingProposalService) sendIMIPInvites(
 	teamMembers []domain.TeamMemberDetailed,
 ) {
 	if !s.imipEnabled || s.email == nil {
+		log.Warn().Bool("imip_enabled", s.imipEnabled).
+			Bool("smtp_nil", s.email == nil).
+			Msg("imip: skip — SMTP не сконфигурирован")
 		return
 	}
 
@@ -168,13 +184,28 @@ func (s *MeetingProposalService) sendIMIPInvites(
 		attendees = append(attendees, imip.Attendee{Email: r.email, Name: r.fullName})
 	}
 
+	// ORGANIZER в .ics: если есть выделенный IMIP_REPLY_TO — используем его
+	// (там слушает IMAP-poller для приёма REPLY). Иначе берём from SMTP —
+	// .ics уйдёт, но Accept-ответ просто не будет авто-обработан.
+	organizerEmail := s.imipReplyTo
+	if organizerEmail == "" {
+		// «Workie <bot@host>» → «bot@host». «foo@host» → «foo@host».
+		raw := s.email.From()
+		if i := strings.LastIndex(raw, "<"); i >= 0 {
+			if j := strings.LastIndex(raw, ">"); j > i {
+				raw = raw[i+1 : j]
+			}
+		}
+		organizerEmail = strings.TrimSpace(raw)
+	}
+
 	icsBody := imip.BuildInvitation(imip.Invitation{
 		MeetingID:      meetingID,
 		Title:          title,
 		Description:    description,
 		StartAt:        startAt,
 		EndAt:          endAt,
-		OrganizerEmail: s.imipReplyTo,
+		OrganizerEmail: organizerEmail,
 		OrganizerName:  initiatorName,
 		Attendees:      attendees,
 		Sequence:       0,
