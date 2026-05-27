@@ -160,7 +160,7 @@ func ensureAdmin(ctx context.Context, db *pgxpool.Pool, log zerolog.Logger) erro
 	var userID uuid.UUID
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO users (email, password_hash, role, full_name, timezone)
-		VALUES ($1, $2, 'admin', 'Алексей Админов', 'Europe/Moscow')
+		VALUES ($1, $2, 'admin', 'Александр Черемисов', 'Europe/Moscow')
 		RETURNING id
 	`, adminEmail, hash).Scan(&userID); err != nil {
 		return err
@@ -230,7 +230,7 @@ const demoPassword = "qwerty12345"
 
 func demoPeople() []demoPerson {
 	return []demoPerson{
-		{Email: "anna@worktime.local", FullName: "Анна Соколова", Role: "employee",
+		{Email: "anna@worktime.local", FullName: "Максим Малчевский", Role: "employee",
 			Department: "Platform", Position: "Backend-инженер", HRFormat: "hybrid",
 			Timezone: "Europe/Moscow", DaysShift: 3, WorkFormat: "hybrid",
 			HoursStart: "10:00", HoursEnd: "19:00"},
@@ -239,29 +239,29 @@ func demoPeople() []demoPerson {
 			Timezone: "Europe/Moscow", DaysShift: 10, WorkFormat: "office",
 			HoursStart: "09:00", HoursEnd: "18:00",
 			Exceptions: []demoException{{Kind: "vacation", StartIn: 14, EndIn: 28, Comment: "Отпуск"}}},
-		{Email: "maria@worktime.local", FullName: "Мария Петрова", Role: "pm",
+		{Email: "maria@worktime.local", FullName: "Степан Жаров", Role: "pm",
 			Department: "Product", Position: "Проектный менеджер", HRFormat: "remote",
 			Timezone: "Europe/Kaliningrad", DaysShift: 45, WorkFormat: "remote",
 			HoursStart: "09:00", HoursEnd: "18:00"},
-		{Email: "lena@worktime.local", FullName: "Лена Орлова", Role: "hr",
+		{Email: "lena@worktime.local", FullName: "Даниил Постников", Role: "hr",
 			Department: "People", Position: "HR-менеджер", HRFormat: "hybrid",
 			Timezone: "Europe/Kaliningrad", DaysShift: 50, WorkFormat: "hybrid",
 			HoursStart: "09:30", HoursEnd: "18:30"},
-		{Email: "sergey@worktime.local", FullName: "Сергей Васильев", Role: "employee",
+		{Email: "sergey@worktime.local", FullName: "Олег Пламадил", Role: "employee",
 			Department: "Distributed", Position: "DevOps-инженер", HRFormat: "remote",
 			Timezone: "Asia/Novosibirsk", DaysShift: 142, WorkFormat: "remote",
 			HoursStart: "09:00", HoursEnd: "18:00",
 			Exceptions: []demoException{{Kind: "sick_leave", StartIn: -3, EndIn: 0, Comment: "ОРВИ"}}},
-		{Email: "olga@worktime.local", FullName: "Ольга Кузнецова", Role: "analyst",
+		{Email: "olga@worktime.local", FullName: "Александр Петров", Role: "analyst",
 			Department: "Distributed", Position: "Аналитик данных", HRFormat: "remote",
 			Timezone: "Asia/Novosibirsk", DaysShift: 95, WorkFormat: "remote",
 			HoursStart: "10:00", HoursEnd: "19:00"},
-		{Email: "dmitry@worktime.local", FullName: "Дмитрий Соловьёв", Role: "employee",
+		{Email: "dmitry@worktime.local", FullName: "Даниил Игаев", Role: "employee",
 			Department: "Distributed", Position: "Frontend-инженер", HRFormat: "office",
 			Timezone: "Europe/Lisbon", DaysShift: 180, WorkFormat: "remote",
 			HoursStart: "09:00", HoursEnd: "18:00",
 			Exceptions: []demoException{{Kind: "business_trip", StartIn: 21, EndIn: 25, Comment: "Конференция"}}},
-		{Email: "tanya@worktime.local", FullName: "Татьяна Белова", Role: "employee",
+		{Email: "tanya@worktime.local", FullName: "Софья Ермолина", Role: "employee",
 			Department: "Product", Position: "Дизайнер", HRFormat: "hybrid",
 			Timezone: "Europe/Lisbon", DaysShift: 20, WorkFormat: "hybrid",
 			HoursStart: "10:00", HoursEnd: "19:00"},
