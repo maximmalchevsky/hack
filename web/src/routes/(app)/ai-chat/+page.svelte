@@ -1076,7 +1076,7 @@
 		lines.push(
 			suggestions.length === 1
 				? 'Нашлась одна встреча, которую стоит перенести:'
-				: `Вот ${suggestions.length} встреч, которые стоит перенести в первую очередь:`
+				: `Вот ${suggestions.length} ${pluralRu(suggestions.length, ['встреча', 'встречи', 'встреч'])}, которые стоит перенести в первую очередь:`
 		);
 		for (const s of suggestions) {
 			lines.push(`\n**${s.title}** · ${fmtWinFromIso(s.start_at, s.end_at)}`);

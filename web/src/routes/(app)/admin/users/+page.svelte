@@ -8,6 +8,7 @@
 	import {
 		listAdminUsers,
 		updateUserRole,
+		updateUserEmail,
 		importUsersCSV,
 		type AdminUser,
 		type ImportResult
@@ -47,6 +48,36 @@
 	function initials(name: string): string {
 		const parts = name.trim().split(/\s+/);
 		return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '??';
+	}
+
+	// --- Inline-редактор email ---
+	let emailEditingId = $state<string | null>(null);
+	let emailDraft = $state('');
+	let emailSavingId = $state<string | null>(null);
+
+	async function saveEmail(u: AdminUser) {
+		const e = emailDraft.trim().toLowerCase();
+		if (!e || e === u.email) {
+			emailEditingId = null;
+			return;
+		}
+		emailSavingId = u.id;
+		try {
+			await updateUserEmail(u.id, e);
+			users = users.map((x) => (x.id === u.id ? { ...x, email: e } : x));
+			success = `Email "${u.full_name}" → ${e}`;
+			emailEditingId = null;
+		} catch (err) {
+			if (err instanceof ApiError && err.status === 409) {
+				error = 'Этот email уже занят другим пользователем';
+			} else if (err instanceof ApiError && err.status === 400) {
+				error = 'Неверный формат email';
+			} else {
+				error = err instanceof ApiError ? err.message : String(err);
+			}
+		} finally {
+			emailSavingId = null;
+		}
 	}
 
 	function fmtDate(iso: string): string {
@@ -172,7 +203,49 @@ maria@example.com,Мария Петрова,Product,PM,Europe/Moscow,2023-06-01,
 						{:else}
 							<div class="card__title">{u.full_name}</div>
 						{/if}
-						<div class="text-text-3 text-xs">{u.email} · {u.timezone} · с {fmtDate(u.created_at)}</div>
+						<div class="text-text-3 text-xs admin-user__meta">
+							{#if emailEditingId === u.id}
+								<input
+									type="email"
+									class="admin-user__email-input"
+									bind:value={emailDraft}
+									disabled={emailSavingId === u.id}
+									placeholder="new@example.com"
+								/>
+								<button
+									type="button"
+									class="admin-user__email-btn admin-user__email-btn--save"
+									onclick={() => saveEmail(u)}
+									disabled={emailSavingId === u.id}
+									title="Сохранить"
+								>
+									<i class="ti ti-check"></i>
+								</button>
+								<button
+									type="button"
+									class="admin-user__email-btn"
+									onclick={() => (emailEditingId = null)}
+									disabled={emailSavingId === u.id}
+									title="Отмена"
+								>
+									<i class="ti ti-x"></i>
+								</button>
+							{:else}
+								<span>{u.email}</span>
+								<button
+									type="button"
+									class="admin-user__email-btn"
+									onclick={() => {
+										emailDraft = u.email;
+										emailEditingId = u.id;
+									}}
+									title="Изменить email"
+								>
+									<i class="ti ti-pencil"></i>
+								</button>
+							{/if}
+							· {u.timezone} · с {fmtDate(u.created_at)}
+						</div>
 					</div>
 					<select
 						value={u.role}
@@ -412,5 +485,42 @@ maria@example.com,Мария Петрова,Product,PM,Europe/Moscow,2023-06-01,
 	.imp__err {
 		color: var(--danger-strong);
 		background: var(--danger-bg);
+	}
+	.admin-user__meta {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		flex-wrap: wrap;
+	}
+	.admin-user__email-input {
+		padding: 2px 6px;
+		font-size: 12px;
+		border: 0.5px solid var(--border);
+		border-radius: 4px;
+		background: var(--bg);
+		color: var(--text);
+		min-width: 200px;
+	}
+	.admin-user__email-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 18px;
+		height: 18px;
+		padding: 0;
+		border: 0;
+		border-radius: 3px;
+		background: transparent;
+		color: var(--text-3);
+		cursor: pointer;
+		font-size: 12px;
+	}
+	.admin-user__email-btn:hover {
+		background: var(--surface-2);
+		color: var(--text);
+	}
+	.admin-user__email-btn--save {
+		background: var(--info-bg);
+		color: var(--info-strong);
 	}
 </style>

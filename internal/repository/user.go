@@ -84,6 +84,31 @@ func (r *UserRepo) ByEmail(ctx context.Context, email string) (*domain.User, err
 	return u, nil
 }
 
+// UpdateEmail — меняет email пользователя. Email нормализуется в lowercase.
+// Возвращает ErrEmailTaken при коллизии (PG unique violation 23505),
+// ErrNotFound если пользователь не существует.
+func (r *UserRepo) UpdateEmail(ctx context.Context, id uuid.UUID, newEmail string) error {
+	email := strings.ToLower(strings.TrimSpace(newEmail))
+	if email == "" {
+		return fmt.Errorf("user repo: empty email")
+	}
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE users SET email = $1, updated_at = now()
+		WHERE id = $2
+	`, email, id)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return ErrEmailTaken
+		}
+		return fmt.Errorf("user repo: update email: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ByID — найти пользователя по UUID.
 func (r *UserRepo) ByID(ctx context.Context, id uuid.UUID) (*domain.User, error) {
 	row := r.pool.QueryRow(ctx, `

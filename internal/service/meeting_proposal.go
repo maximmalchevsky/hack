@@ -2396,7 +2396,8 @@ func (s *MeetingProposalService) SuggestReschedule(
 		overloadedCount := s.countDayOverloadedParticipants(ctx, m.StartAt, d.empIDs, m.ID)
 		if overloadedCount > 0 {
 			score += 30 * overloadedCount
-			reasons = append(reasons, fmt.Sprintf("у %d участников этот день перегружен встречами", overloadedCount))
+			reasons = append(reasons, fmt.Sprintf("у %d %s этот день перегружен встречами",
+				overloadedCount, pluralRu(overloadedCount, "участника", "участников", "участников")))
 		}
 
 		// 4b. Double-booking — пересечение с другой моей встречей.
@@ -2510,6 +2511,27 @@ func (s *MeetingProposalService) countDayOverloadedParticipants(
 		}
 	}
 	return overloaded
+}
+
+// pluralRu — выбирает правильную форму русского слова по числу.
+// pluralRu(1, "час", "часа", "часов") → "час"
+// pluralRu(2, "час", "часа", "часов") → "часа"
+// pluralRu(5, "час", "часа", "часов") → "часов"
+// pluralRu(21, ...) → "час", pluralRu(22, ...) → "часа", и т.д.
+func pluralRu(n int, one, few, many string) string {
+	abs := n
+	if abs < 0 {
+		abs = -abs
+	}
+	m10 := abs % 10
+	m100 := abs % 100
+	if m10 == 1 && m100 != 11 {
+		return one
+	}
+	if m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) {
+		return few
+	}
+	return many
 }
 
 // sortSuggested — in-place сортировка по score desc, при равенстве — по start_at asc.

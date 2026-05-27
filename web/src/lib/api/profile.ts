@@ -126,6 +126,11 @@ export const updateMyProfile = (body: {
 
 export const confirmMyProfile = () => api.post<void>('/api/v1/me/profile/confirm');
 
+// updateMyEmail — меняет email текущего пользователя. После смены логин
+// тоже становится новым (входить нужно по новой почте).
+export const updateMyEmail = (email: string) =>
+	api.patch<{ ok: boolean; email: string }>('/api/v1/me/email', { email });
+
 export const listExceptions = (params?: { from?: string; to?: string }) => {
 	const q = new URLSearchParams();
 	if (params?.from) q.set('from', params.from);

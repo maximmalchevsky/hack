@@ -99,6 +99,10 @@ export const listAdminUsers = () =>
 export const updateUserRole = (id: string, role: UserRole) =>
 	api.patch<void>(`/api/v1/admin/users/${id}/role`, { role });
 
+// updateUserEmail — admin-only смена почты. 409 если занят, 400 если кривой.
+export const updateUserEmail = (id: string, email: string) =>
+	api.patch<void>(`/api/v1/admin/users/${id}/email`, { email });
+
 export const listAdminSources = () =>
 	api.get<{ sources: AdminSource[] }>('/api/v1/admin/sources');
 

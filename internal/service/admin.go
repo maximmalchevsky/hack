@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"worktimesync/internal/domain"
+	"worktimesync/internal/repository"
 )
 
 // AdminService — операции уровня администратора.
@@ -51,6 +53,52 @@ func (s *AdminService) ListUsers(ctx context.Context) ([]AdminUserRow, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// ErrUserNotFound — тип ошибки UpdateEmail для пользователя, которого нет.
+// ErrInvalidEmail и ErrEmailTaken — переиспользуются из auth.go.
+var ErrUserNotFound = errors.New("admin: user not found")
+
+// UpdateEmail — админская смена почты любого пользователя. Email
+// нормализуется (lowercase + trim). Логин пользователя становится новым.
+func (s *AdminService) UpdateEmail(ctx context.Context, userID uuid.UUID, newEmail string) error {
+	email := strings.ToLower(strings.TrimSpace(newEmail))
+	if !looksLikeEmailService(email) {
+		return ErrInvalidEmail
+	}
+	users := repository.NewUserRepo(s.pool)
+	if err := users.UpdateEmail(ctx, userID, email); err != nil {
+		if errors.Is(err, repository.ErrEmailTaken) {
+			return ErrEmailTaken
+		}
+		if errors.Is(err, repository.ErrNotFound) {
+			return ErrUserNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+// looksLikeEmailService — дублирует looksLikeEmail из handler/me.go.
+// Просто чтобы не плодить зависимость service → handler.
+func looksLikeEmailService(s string) bool {
+	if len(s) < 3 || len(s) > 254 {
+		return false
+	}
+	at := strings.IndexByte(s, '@')
+	if at <= 0 || at == len(s)-1 {
+		return false
+	}
+	dot := strings.LastIndexByte(s, '.')
+	if dot < at+2 || dot == len(s)-1 {
+		return false
+	}
+	for _, r := range s {
+		if r <= ' ' || r == ',' || r == ';' || r == '"' || r == '\'' {
+			return false
+		}
+	}
+	return true
 }
 
 // UpdateRole — сменить роль пользователя.

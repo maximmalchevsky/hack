@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
@@ -41,6 +42,7 @@ func (h *AdminHandler) Mount(r fiber.Router) {
 	g := r.Group("/admin", middleware.RequireRole(domain.RoleAdmin))
 	g.Get("/users", h.listUsers)
 	g.Patch("/users/:id/role", h.updateRole)
+	g.Patch("/users/:id/email", h.updateEmail)
 	g.Get("/sources", h.listSources)
 	g.Get("/rules", h.getRules)
 	g.Put("/rules", h.updateRules)
@@ -108,6 +110,37 @@ func (h *AdminHandler) updateRole(c fiber.Ctx) error {
 	}
 	if err := h.svc.UpdateRole(c.Context(), id, domain.Role(req.Role)); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	return c.Status(fiber.StatusNoContent).Send(nil)
+}
+
+// updateEmailRequest — body для PATCH /admin/users/:id/email.
+type AdminUpdateEmailRequest struct {
+	Email string `json:"email"`
+}
+
+// updateEmail — админская смена почты любого пользователя.
+// 400 — кривой email, 409 — занят, 404 — нет пользователя.
+func (h *AdminHandler) updateEmail(c fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid id")
+	}
+	var req AdminUpdateEmailRequest
+	if err := c.Bind().Body(&req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
+	}
+	if err := h.svc.UpdateEmail(c.Context(), id, req.Email); err != nil {
+		switch {
+		case errors.Is(err, service.ErrInvalidEmail):
+			return fiber.NewError(fiber.StatusBadRequest, "invalid email")
+		case errors.Is(err, service.ErrEmailTaken):
+			return fiber.NewError(fiber.StatusConflict, "email already taken")
+		case errors.Is(err, service.ErrUserNotFound):
+			return fiber.NewError(fiber.StatusNotFound, "user not found")
+		default:
+			return err
+		}
 	}
 	return c.Status(fiber.StatusNoContent).Send(nil)
 }

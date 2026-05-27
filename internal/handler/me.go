@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -271,6 +272,65 @@ func (h *MeHandler) TelegramStatus(c fiber.Ctx) error {
 		resp.DeepLink = "https://t.me/" + h.tgBotUsername + "?start=" + uid.String()
 	}
 	return c.JSON(resp)
+}
+
+// updateEmailRequest — body для PATCH /me/email.
+type updateEmailRequest struct {
+	Email string `json:"email"`
+}
+
+// UpdateEmail — меняет email текущего пользователя. Email — это же логин;
+// после смены логиниться нужно по новому. Подтверждения паролем не требуем
+// (по продуктовому решению — для хакатона достаточно).
+//
+// Валидация:
+//   - формат через простую регулярку.
+//   - 409 если занят другим пользователем.
+func (h *MeHandler) UpdateEmail(c fiber.Ctx) error {
+	uid := middleware.UserID(c)
+	if uid == uuid.Nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "no user")
+	}
+	var req updateEmailRequest
+	if err := json.Unmarshal(c.Body(), &req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
+	}
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	if !looksLikeEmail(email) {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid email")
+	}
+	if err := h.users.UpdateEmail(c.Context(), uid, email); err != nil {
+		if errors.Is(err, repository.ErrEmailTaken) {
+			return fiber.NewError(fiber.StatusConflict, "email already taken")
+		}
+		if errors.Is(err, repository.ErrNotFound) {
+			return fiber.NewError(fiber.StatusNotFound, "user not found")
+		}
+		return err
+	}
+	return c.JSON(fiber.Map{"ok": true, "email": email})
+}
+
+// looksLikeEmail — простейшая проверка формата. Не RFC-точная,
+// но отсекает явно битые строки. Для серьёзной валидации — отдельный модуль.
+func looksLikeEmail(s string) bool {
+	if len(s) < 3 || len(s) > 254 {
+		return false
+	}
+	at := strings.IndexByte(s, '@')
+	if at <= 0 || at == len(s)-1 {
+		return false
+	}
+	dot := strings.LastIndexByte(s, '.')
+	if dot < at+2 || dot == len(s)-1 {
+		return false
+	}
+	for _, r := range s {
+		if r <= ' ' || r == ',' || r == ';' || r == '"' || r == '\'' {
+			return false
+		}
+	}
+	return true
 }
 
 // TelegramUnlink — DELETE привязки.

@@ -222,6 +222,7 @@ func (s *Server) registerRoutes() {
 	authed.Patch("/me/notification-prefs", meH.UpdateNotificationPrefs)
 	authed.Get("/me/telegram", meH.TelegramStatus)
 	authed.Delete("/me/telegram", meH.TelegramUnlink)
+	authed.Patch("/me/email", meH.UpdateEmail)
 
 	profileH.Mount(authed)
 	exceptionH.Mount(authed)

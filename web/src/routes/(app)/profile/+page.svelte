@@ -10,6 +10,7 @@
 	import {
 		me,
 		updateMyProfile,
+		updateMyEmail,
 		confirmMyProfile,
 		listExceptions,
 		createException,
@@ -54,6 +55,44 @@
 	let saving = $state(false);
 	let error = $state<string | null>(null);
 	let success = $state<string | null>(null);
+
+	// --- Inline-редактор email ---
+	let emailEditing = $state(false);
+	let emailDraft = $state('');
+	let emailSaving = $state(false);
+	let emailError = $state<string | null>(null);
+	let emailSuccess = $state<string | null>(null);
+
+	async function onSaveEmail() {
+		const e = emailDraft.trim().toLowerCase();
+		if (!e) {
+			emailError = 'Email не может быть пустым';
+			return;
+		}
+		if (meData && e === meData.user.email) {
+			emailEditing = false;
+			return;
+		}
+		emailSaving = true;
+		emailError = null;
+		emailSuccess = null;
+		try {
+			const r = await updateMyEmail(e);
+			if (meData) meData = { ...meData, user: { ...meData.user, email: r.email } };
+			emailSuccess = 'Email обновлён. В следующий раз входить по новому адресу.';
+			emailEditing = false;
+		} catch (err) {
+			if (err instanceof ApiError && err.status === 409) {
+				emailError = 'Эта почта уже занята другим пользователем';
+			} else if (err instanceof ApiError && err.status === 400) {
+				emailError = 'Неверный формат email';
+			} else {
+				emailError = err instanceof ApiError ? err.message : String(err);
+			}
+		} finally {
+			emailSaving = false;
+		}
+	}
 
 	// Редактируемые поля
 	let days = $state<Record<keyof DaysOfWeek, { enabled: boolean; start: string; end: string }>>({
@@ -291,8 +330,54 @@
 						</div>
 						<div class="me-card__email">
 							<i class="ti ti-mail"></i>
-							{meData.user.email}
+							{#if emailEditing}
+								<input
+									type="email"
+									class="me-card__email-input"
+									bind:value={emailDraft}
+									disabled={emailSaving}
+									placeholder="you@example.com"
+								/>
+								<button
+									type="button"
+									class="me-card__email-btn me-card__email-btn--save"
+									onclick={onSaveEmail}
+									disabled={emailSaving}
+									title="Сохранить"
+								>
+									<i class="ti ti-check"></i>
+								</button>
+								<button
+									type="button"
+									class="me-card__email-btn"
+									onclick={() => (emailEditing = false)}
+									disabled={emailSaving}
+									title="Отмена"
+								>
+									<i class="ti ti-x"></i>
+								</button>
+							{:else}
+								<span>{meData.user.email}</span>
+								<button
+									type="button"
+									class="me-card__email-btn"
+									onclick={() => {
+										emailDraft = meData?.user.email ?? '';
+										emailEditing = true;
+										emailError = null;
+									}}
+									title="Изменить email"
+								>
+									<i class="ti ti-pencil"></i>
+								</button>
+							{/if}
 						</div>
+						{#if emailError}
+							<div class="me-card__email-error">{emailError}</div>
+						{/if}
+						{#if emailSuccess}
+							<div class="me-card__email-ok">{emailSuccess}</div>
+						{/if}
 						<div class="me-card__chips">
 							{#if meData.employee?.position}
 								<span class="me-chip">
@@ -498,6 +583,46 @@
 	}
 	.me-card__email i {
 		color: var(--text-3);
+	}
+	.me-card__email-input {
+		padding: 3px 8px;
+		font-size: 13px;
+		border: 0.5px solid var(--border);
+		border-radius: 4px;
+		background: var(--bg);
+		color: var(--text);
+		min-width: 220px;
+	}
+	.me-card__email-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 22px;
+		height: 22px;
+		padding: 0;
+		border: 0;
+		border-radius: 4px;
+		background: transparent;
+		color: var(--text-3);
+		cursor: pointer;
+	}
+	.me-card__email-btn:hover {
+		background: var(--surface-2);
+		color: var(--text);
+	}
+	.me-card__email-btn--save {
+		background: var(--info-bg);
+		color: var(--info-strong);
+	}
+	.me-card__email-error {
+		margin-top: 4px;
+		font-size: 12px;
+		color: var(--danger-strong);
+	}
+	.me-card__email-ok {
+		margin-top: 4px;
+		font-size: 12px;
+		color: var(--success-strong);
 	}
 	.me-card__chips {
 		display: flex;
