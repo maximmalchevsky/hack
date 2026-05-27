@@ -66,7 +66,10 @@ func (h *MeetingsHandler) checkConflicts(c fiber.Ctx) error {
 		}
 		return err
 	}
-	return c.JSON(fiber.Map{"conflicts": conflicts})
+	// Заодно проверяем перегруз: сумма часов встреч в неделе + новая.
+	// Падать на ошибке не имеем права — UI получит хотя бы конфликты.
+	overload, _ := h.proposal.CheckOverload(c.Context(), req.StartAt, req.EndAt, req.EmployeeIDs)
+	return c.JSON(fiber.Map{"conflicts": conflicts, "overload": overload})
 }
 
 // incoming — приглашения для текущего пользователя.

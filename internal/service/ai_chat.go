@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,6 +16,45 @@ import (
 	"worktimesync/internal/ai"
 	"worktimesync/internal/ai/prompts"
 )
+
+// --- Постпроцессинг: вырезаем «нейрослоп» с метриками ---
+//
+// Промпт явно запрещает выдавать «A=0.20», «L=0.87», «z-score = 2.1», но
+// GigaChat периодически их всё равно протаскивает. Чтобы пользователь не видел
+// сырые метрики, фильтруем ответ регулярками.
+//
+// Что вырезаем:
+//   - «A=0.20», «C = 0.34», «L= 0.87», «R=0.5», «Z=0.30», «H=0.1»
+//     (одинарная заглавная буква-метрика + знак = + число).
+//   - «z-score = 2.1», «z score=3», «zscore=1.5».
+//   - «score = 0.42» (общий).
+//   - Парные скобки вокруг них: «(A=0.20)», «(L=0.87, C=0.34)» — целиком убираем.
+//   - Хвостовые запятые/двоеточия/тире, оставшиеся от вырезания: «Иван — , » → «Иван».
+
+var (
+	// «(A=0.20)», «(L=0.87, C=0.34)», «(z-score=2)»
+	rxMetricParens = regexp.MustCompile(`(?i)\s*\(\s*(?:[A-Z]\s*=\s*\d+(?:[.,]\d+)?|z[\s-]*score\s*=?\s*\d+(?:[.,]\d+)?|score\s*=\s*\d+(?:[.,]\d+)?)(?:\s*[,;]\s*(?:[A-Z]\s*=\s*\d+(?:[.,]\d+)?|z[\s-]*score\s*=?\s*\d+(?:[.,]\d+)?|score\s*=\s*\d+(?:[.,]\d+)?))*\s*\)`)
+	// Голая метрика, отделённая запятой/двоеточием/тире/пробелом.
+	rxMetric = regexp.MustCompile(`(?i)(?:[,;:]\s*|\s+—\s+|\s+-\s+|\s+)([A-Z]\s*=\s*\d+(?:[.,]\d+)?|z[\s-]*score\s*=?\s*\d+(?:[.,]\d+)?|score\s*=\s*\d+(?:[.,]\d+)?)`)
+	// Хвостовые артефакты после вырезания: «текст — .», «текст, ,», «текст :  ».
+	rxTrailDangle = regexp.MustCompile(`[\s—\-,:;]+([.\n]|$)`)
+)
+
+// stripMetricValues — убирает из текста значения метрик A/C/L/R/Z/H/z-score.
+// Применяется и к финальному answer, и к каждому стрим-chunk'у. Делает это
+// аккуратно: сохраняет имена и бизнес-цифры (вроде «142 дня»).
+func stripMetricValues(s string) string {
+	if s == "" {
+		return s
+	}
+	// Сначала скобочные группы (там может быть несколько метрик через запятую).
+	s = rxMetricParens.ReplaceAllString(s, "")
+	// Затем одиночные метрики с предшествующим разделителем.
+	s = rxMetric.ReplaceAllString(s, "")
+	// Чистка артефактов перед точкой/переносом.
+	s = rxTrailDangle.ReplaceAllString(s, "$1")
+	return s
+}
 
 // AIChatService — чат-ассистент. Блокирующий Ask + стримящий AskStream.
 type AIChatService struct {
@@ -117,7 +157,7 @@ func (s *AIChatService) Ask(ctx context.Context, userID uuid.UUID, conversationI
 		return "", uuid.Nil, fmt.Errorf("llm: %w", err)
 	}
 
-	answer := resp.Content
+	answer := stripMetricValues(resp.Content)
 	if err := s.appendMessage(ctx, convID, "assistant", answer); err != nil {
 		return answer, convID, err
 	}
@@ -186,8 +226,9 @@ func (s *AIChatService) AskStream(ctx context.Context, userID uuid.UUID, convers
 				out <- AskStreamEvent{ConversationID: convID, Done: true}
 				return
 			}
-			_ = s.appendMessage(ctx, convID, "assistant", resp.Content)
-			out <- AskStreamEvent{ConversationID: convID, Delta: resp.Content}
+			cleaned := stripMetricValues(resp.Content)
+			_ = s.appendMessage(ctx, convID, "assistant", cleaned)
+			out <- AskStreamEvent{ConversationID: convID, Delta: cleaned}
 			out <- AskStreamEvent{ConversationID: convID, Done: true}
 		}()
 		return out, nil
@@ -202,15 +243,22 @@ func (s *AIChatService) AskStream(ctx context.Context, userID uuid.UUID, convers
 				out <- AskStreamEvent{ConversationID: convID, Err: chunk.Err}
 			}
 			if chunk.Delta != "" {
+				// Чистим прямо в чанке — успеваем убрать метрики на лету.
+				// Граница между чанками может разорвать паттерн (приходит
+				// «A=» в одном, «0.20» в другом) — для такого случая в Done
+				// делаем финальный «replace» с очищенным полным ответом.
+				cleaned := stripMetricValues(chunk.Delta)
 				buf.WriteString(chunk.Delta)
-				select {
-				case out <- AskStreamEvent{ConversationID: convID, Delta: chunk.Delta}:
-				case <-ctx.Done():
-					return
+				if cleaned != "" {
+					select {
+					case out <- AskStreamEvent{ConversationID: convID, Delta: cleaned}:
+					case <-ctx.Done():
+						return
+					}
 				}
 			}
 			if chunk.Done {
-				answer := buf.String()
+				answer := stripMetricValues(buf.String())
 				if answer != "" {
 					_ = s.appendMessage(ctx, convID, "assistant", answer)
 				} else {

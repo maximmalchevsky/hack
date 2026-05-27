@@ -215,6 +215,10 @@ type ProposeMeetingInput struct {
 	// быть Nil (тогда встреча не привязана к команде) либо ссылаться на любую
 	// «основную» команду для отображения.
 	InviteeEmpIDs []uuid.UUID
+	// Force — обходит soft-проверку анти-burnout (часов встреч в неделе > порога).
+	// Используется когда инициатор сознательно подтвердил «всё равно создать»
+	// в UI после предупреждения о перегрузе.
+	Force bool
 }
 
 type ProposeMeetingResult struct {
@@ -230,7 +234,26 @@ type ProposeMeetingResult struct {
 var (
 	ErrMeetingInvalidRange    = errors.New("meeting: end_at must be after start_at")
 	ErrMeetingNoParticipants  = errors.New("meeting: no participants — set team_id or invitee_emp_ids")
+	// ErrMeetingOverload — soft-block анти-burnout: у одного или нескольких
+	// участников после новой встречи превышается WeeklyMeetingHoursLimit.
+	// Инициатор может пересоздать с Force=true.
+	ErrMeetingOverload        = errors.New("meeting: would overload one or more participants")
 )
+
+// OverloadDetails — конкретика для UI: какие сотрудники, при каких числах.
+// Возвращается обёрнутым в errMeetingOverload через errors.As.
+type OverloadDetails struct {
+	Entries []OverloadEntry
+}
+
+// Error — реализация error для OverloadDetails, чтобы можно было её через
+// fmt.Errorf("%w", details) обернуть с базовой ErrMeetingOverload.
+func (o *OverloadDetails) Error() string {
+	return ErrMeetingOverload.Error()
+}
+
+// Unwrap — связывает с базовой ErrMeetingOverload для errors.Is.
+func (o *OverloadDetails) Unwrap() error { return ErrMeetingOverload }
 
 // Propose — для каждого участника команды/списка приглашённых + инициатора
 // пушит уведомление. Поддерживает два режима:
@@ -277,6 +300,24 @@ func (s *MeetingProposalService) Propose(ctx context.Context, in ProposeMeetingI
 		members, err = s.teams.Members(ctx, in.TeamID)
 		if err != nil {
 			return nil, err
+		}
+	}
+
+	// Анти-burnout soft-block: проверяем что у участников после новой встречи
+	// не превысится WeeklyMeetingHoursLimit. Если превышается и инициатор НЕ
+	// прислал Force=true — возвращаем ErrMeetingOverload c деталями.
+	if !in.Force {
+		empIDsForCheck := make([]uuid.UUID, 0, len(members)+1)
+		if in.InitiatorEmp != uuid.Nil {
+			empIDsForCheck = append(empIDsForCheck, in.InitiatorEmp)
+		}
+		for _, m := range members {
+			if m.EmployeeID != in.InitiatorEmp {
+				empIDsForCheck = append(empIDsForCheck, m.EmployeeID)
+			}
+		}
+		if overload, oerr := s.CheckOverload(ctx, in.StartAt, in.EndAt, empIDsForCheck); oerr == nil && len(overload) > 0 {
+			return nil, &OverloadDetails{Entries: overload}
 		}
 	}
 
@@ -2079,4 +2120,147 @@ func exceptionTitle(kind, comment string) string {
 		return label + " — " + comment
 	}
 	return label
+}
+
+// --- Анти-burnout: ограничение на количество часов встреч в неделю ---
+
+// WeeklyMeetingHoursLimit — порог, после которого создание новой встречи
+// требует подтверждения от инициатора (soft-block). Считаются только реальные
+// встречи (не task-блоки и не фокус-время) за календарную неделю Пн-Вс в TZ
+// сотрудника.
+const WeeklyMeetingHoursLimit = 35.0
+
+// OverloadEntry — один сотрудник, у которого после новой встречи количество
+// часов встреч в неделе превысит порог.
+type OverloadEntry struct {
+	EmployeeID     uuid.UUID `json:"employee_id"`
+	FullName       string    `json:"full_name"`
+	CurrentHours   float64   `json:"current_hours"`   // часы встреч в этой неделе сейчас (без новой)
+	ProjectedHours float64   `json:"projected_hours"` // current + длительность новой
+	Limit          float64   `json:"limit"`           // порог
+	WeekStart      time.Time `json:"week_start"`      // начало недели Пн в TZ сотрудника, UTC
+	WeekEnd        time.Time `json:"week_end"`        // конец недели Пн (Пн+7d) в TZ, UTC
+}
+
+// CheckOverload — для каждого emp_id считает суммарную длительность встреч
+// за календарную неделю (Пн 00:00 — Пн 00:00 в TZ сотрудника), куда попадает
+// новая встреча, и прибавляет её длительность. Если итого > порога —
+// возвращает запись об этом сотруднике.
+//
+// Учитываются только реальные встречи: status != 'cancelled', is_excluded=false,
+// category НЕ в (Фокус-время, Задача, План задачи).
+func (s *MeetingProposalService) CheckOverload(
+	ctx context.Context,
+	startAt, endAt time.Time,
+	empIDs []uuid.UUID,
+) ([]OverloadEntry, error) {
+	if !endAt.After(startAt) {
+		return nil, ErrMeetingInvalidRange
+	}
+	newDurHours := endAt.Sub(startAt).Hours()
+	if newDurHours <= 0 || len(empIDs) == 0 {
+		return []OverloadEntry{}, nil
+	}
+
+	// Резолвим имена сотрудников одним запросом — для красивого ответа.
+	cleaned := make([]uuid.UUID, 0, len(empIDs))
+	for _, id := range empIDs {
+		if id != uuid.Nil {
+			cleaned = append(cleaned, id)
+		}
+	}
+	if len(cleaned) == 0 {
+		return []OverloadEntry{}, nil
+	}
+
+	names := map[uuid.UUID]string{}
+	if nameRows, nerr := s.pool.Query(ctx, `
+		SELECT e.id, COALESCE(u.full_name, '')
+		FROM employees e
+		JOIN users u ON u.id = e.user_id
+		WHERE e.id = ANY($1)
+	`, cleaned); nerr == nil {
+		for nameRows.Next() {
+			var id uuid.UUID
+			var n string
+			if err := nameRows.Scan(&id, &n); err == nil {
+				names[id] = n
+			}
+		}
+		nameRows.Close()
+	}
+
+	out := make([]OverloadEntry, 0, 2)
+
+	for _, empID := range cleaned {
+		// Определяем неделю в TZ сотрудника. Без профиля — UTC.
+		loc := time.UTC
+		if profile, perr := s.profiles.Active(ctx, empID); perr == nil && profile != nil {
+			if l, lerr := time.LoadLocation(profile.Timezone); lerr == nil && l != nil {
+				loc = l
+			}
+		}
+		weekStart, weekEnd := weekBoundaries(startAt, loc)
+
+		// Сумма часов встреч в [weekStart, weekEnd), кроме task-блоков.
+		// Учитываем пересечение с границами недели: если встреча начинается
+		// до weekStart или заканчивается после weekEnd — считаем только ту часть,
+		// что внутри недели. Это редкий случай, но честнее.
+		var minutes float64
+		err := s.pool.QueryRow(ctx, `
+			SELECT COALESCE(SUM(
+				EXTRACT(EPOCH FROM (
+					LEAST(end_at, $3::timestamptz) - GREATEST(start_at, $2::timestamptz)
+				)) / 60
+			), 0)::float8
+			FROM calendar_events
+			WHERE employee_id = $1
+			  AND is_excluded = false
+			  AND status <> 'cancelled'
+			  AND start_at < $3::timestamptz
+			  AND end_at > $2::timestamptz
+			  AND (category IS NULL
+			       OR category NOT IN ('Фокус-время', 'Задача', 'План задачи'))
+		`, empID, weekStart, weekEnd).Scan(&minutes)
+		if err != nil {
+			// Не валим всю проверку из-за одного сотрудника — просто пропустим.
+			continue
+		}
+		currentHours := minutes / 60
+		projected := currentHours + newDurHours
+		if projected > WeeklyMeetingHoursLimit {
+			out = append(out, OverloadEntry{
+				EmployeeID:     empID,
+				FullName:       names[empID],
+				CurrentHours:   round1(currentHours),
+				ProjectedHours: round1(projected),
+				Limit:          WeeklyMeetingHoursLimit,
+				WeekStart:      weekStart,
+				WeekEnd:        weekEnd,
+			})
+		}
+	}
+
+	return out, nil
+}
+
+// weekBoundaries — для момента t в TZ loc возвращает границы недели
+// [Понедельник 00:00, Понедельник+7d 00:00) в UTC. Так удобно сравнивать
+// с UTC-значениями timestamptz в БД.
+func weekBoundaries(t time.Time, loc *time.Location) (time.Time, time.Time) {
+	local := t.In(loc)
+	wd := int(local.Weekday())
+	// Воскресенье = 0 в Go-стандарте → у нас Пн-Вс, делаем Пн=1, Вс=7.
+	if wd == 0 {
+		wd = 7
+	}
+	mondayLocal := time.Date(
+		local.Year(), local.Month(), local.Day()-(wd-1),
+		0, 0, 0, 0, loc,
+	)
+	return mondayLocal.UTC(), mondayLocal.Add(7 * 24 * time.Hour).UTC()
+}
+
+func round1(x float64) float64 {
+	return float64(int(x*10+0.5)) / 10
 }

@@ -29,6 +29,9 @@ type ProposeMeetingRequest struct {
 	// InviteeEmpIDs — опциональный список для межкомандной встречи.
 	// Если задан — заменяет состав команды из URL.
 	InviteeEmpIDs []uuid.UUID `json:"invitee_emp_ids,omitempty"`
+	// Force — обходит soft-block анти-burnout. Используется UI после показа
+	// предупреждения о перегрузе и явного подтверждения от инициатора.
+	Force bool `json:"force,omitempty"`
 }
 
 func (h *TeamHandler) proposeMeeting(c fiber.Ctx) error {
@@ -50,16 +53,36 @@ func (h *TeamHandler) proposeMeeting(c fiber.Ctx) error {
 		Title:         req.Title,
 		Category:      req.Category,
 		InviteeEmpIDs: req.InviteeEmpIDs,
+		Force:         req.Force,
 		InitiatorUser: middleware.UserID(c),
 		InitiatorEmp:  middleware.EmployeeID(c),
 	})
 	if err != nil {
-		if errors.Is(err, service.ErrMeetingInvalidRange) {
-			return fiber.NewError(fiber.StatusBadRequest, err.Error())
-		}
-		return err
+		return mapProposeErr(c, err)
 	}
 	return c.JSON(res)
+}
+
+// mapProposeErr — общий маппер ошибок Propose для двух handler'ов
+// (командный и межкомандный).
+//
+// При перегрузе (ErrMeetingOverload) отвечаем 409 c JSON-телом
+// {error, overload: [...]}, чтобы UI мог показать конкретику и при подтверждении
+// пересоздать с force=true.
+func mapProposeErr(c fiber.Ctx, err error) error {
+	var od *service.OverloadDetails
+	if errors.As(err, &od) {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error":    "overload",
+			"overload": od.Entries,
+		})
+	}
+	switch {
+	case errors.Is(err, service.ErrMeetingInvalidRange),
+		errors.Is(err, service.ErrMeetingNoParticipants):
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	return err
 }
 
 // --- межкомандная встреча: find-window + propose без привязки к одной команде ---
@@ -100,7 +123,9 @@ type CrossProposeRequest struct {
 	EmployeeIDs   []uuid.UUID `json:"employee_ids"`
 	// PrimaryTeamID опционально — какая команда «главная» для отображения.
 	// Если пуст — TeamName = «Несколько команд».
-	PrimaryTeamID *uuid.UUID  `json:"primary_team_id,omitempty"`
+	PrimaryTeamID *uuid.UUID `json:"primary_team_id,omitempty"`
+	// Force — обходит soft-block анти-burnout.
+	Force bool `json:"force,omitempty"`
 }
 
 func (h *TeamHandler) crossProposeMeeting(c fiber.Ctx) error {
@@ -125,16 +150,12 @@ func (h *TeamHandler) crossProposeMeeting(c fiber.Ctx) error {
 		Title:         req.Title,
 		Category:      req.Category,
 		InviteeEmpIDs: req.EmployeeIDs,
+		Force:         req.Force,
 		InitiatorUser: middleware.UserID(c),
 		InitiatorEmp:  middleware.EmployeeID(c),
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, service.ErrMeetingInvalidRange),
-			errors.Is(err, service.ErrMeetingNoParticipants):
-			return fiber.NewError(fiber.StatusBadRequest, err.Error())
-		}
-		return err
+		return mapProposeErr(c, err)
 	}
 	return c.JSON(res)
 }
