@@ -104,3 +104,26 @@ export const checkConflicts = (body: CheckConflictsBody) =>
 		'/api/v1/meetings/check-conflicts',
 		body
 	);
+
+// --- Умный анализ: какие встречи лучше перенести ---
+
+export interface SuggestedReschedule {
+	meeting_id: string;
+	title: string;
+	start_at: string;
+	end_at: string;
+	team_name?: string;
+	category?: string;
+	score: number;
+	reasons: string[];
+}
+
+export const suggestReschedule = (opts?: { days?: number; top?: number }) => {
+	const q = new URLSearchParams();
+	if (opts?.days) q.set('days', String(opts.days));
+	if (opts?.top) q.set('top', String(opts.top));
+	const suffix = q.toString() ? `?${q.toString()}` : '';
+	return api.get<{ suggestions: SuggestedReschedule[] }>(
+		`/api/v1/meetings/suggest-reschedule${suffix}`
+	);
+};

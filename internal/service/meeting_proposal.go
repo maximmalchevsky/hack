@@ -2264,3 +2264,264 @@ func weekBoundaries(t time.Time, loc *time.Location) (time.Time, time.Time) {
 func round1(x float64) float64 {
 	return float64(int(x*10+0.5)) / 10
 }
+
+// --- Умный анализ «какую встречу перенести» ---
+
+// SuggestedReschedule — кандидат на перенос с обоснованием.
+type SuggestedReschedule struct {
+	MeetingID uuid.UUID `json:"meeting_id"`
+	Title     string    `json:"title"`
+	StartAt   time.Time `json:"start_at"`
+	EndAt     time.Time `json:"end_at"`
+	TeamName  string    `json:"team_name,omitempty"`
+	Category  string    `json:"category,omitempty"`
+	Score     int       `json:"score"`
+	Reasons   []string  `json:"reasons"`
+}
+
+// SuggestReschedule — для активных встреч viewer'а (где он может переносить)
+// в горизонте N дней считает «score переноса» по нескольким сигналам и
+// возвращает top кандидатов с человекочитаемыми причинами.
+//
+// Учитываемые сигналы (накапливаются в score):
+//   - +30 за каждого участника, у которого в день встречи >5ч встреч (перегруз дня).
+//   - +50 если встреча сама пересекается по времени с другой моей активной встречей
+//     (double-booking).
+//   - +20 если в моём расписании в день встречи есть 3+ встречи в окне +-1.5ч от неё
+//     (нет перерыва).
+//   - +15 если category in ('Стендапы', '1:1') — такие встречи переносятся легче.
+//
+// Возвращает не больше topN записей, отсортированных по score desc.
+// Если score=0 — встречу всё равно не вернёт, мы показываем только осмысленных
+// кандидатов.
+func (s *MeetingProposalService) SuggestReschedule(
+	ctx context.Context,
+	viewerUser, viewerEmp uuid.UUID,
+	role domain.Role,
+	days, topN int,
+) ([]SuggestedReschedule, error) {
+	if days <= 0 {
+		days = 7
+	}
+	if topN <= 0 {
+		topN = 3
+	}
+
+	// 1. Берём мои встречи на ближайшие N дней — те где я могу переносить
+	// (инициатор или owner команды или admin). Переиспользуем ListMy.
+	mine, err := s.ListMy(ctx, viewerUser, viewerEmp, role)
+	if err != nil {
+		return nil, err
+	}
+	cutoff := time.Now().Add(time.Duration(days) * 24 * time.Hour)
+	candidates := make([]MyMeeting, 0, len(mine))
+	for _, m := range mine {
+		if !m.CanCancel {
+			continue
+		}
+		if m.StartAt.After(cutoff) {
+			continue
+		}
+		if m.EndAt.Before(time.Now()) {
+			continue
+		}
+		candidates = append(candidates, m)
+	}
+	if len(candidates) == 0 {
+		return []SuggestedReschedule{}, nil
+	}
+
+	// 2. Для каждой кандидатуры тянем участников и категорию.
+	type meetingData struct {
+		m        MyMeeting
+		category string
+		empIDs   []uuid.UUID
+	}
+	dataByID := make(map[uuid.UUID]*meetingData, len(candidates))
+	meetingIDs := make([]uuid.UUID, 0, len(candidates))
+	for _, m := range candidates {
+		dataByID[m.ID] = &meetingData{m: m}
+		meetingIDs = append(meetingIDs, m.ID)
+	}
+
+	// Категория встречи из meeting_proposals.
+	if rows, qerr := s.pool.Query(ctx, `
+		SELECT id, COALESCE(category, '') FROM meeting_proposals
+		WHERE id = ANY($1)
+	`, meetingIDs); qerr == nil {
+		for rows.Next() {
+			var id uuid.UUID
+			var cat string
+			if err := rows.Scan(&id, &cat); err == nil {
+				if d := dataByID[id]; d != nil {
+					d.category = cat
+				}
+			}
+		}
+		rows.Close()
+	}
+
+	// Участники: emp_id для каждого приглашённого. ListMy уже даёт accepted/
+	// declined/pending — но нам нужны emp_id, лезем в meeting_responses.
+	if rows, qerr := s.pool.Query(ctx, `
+		SELECT meeting_id, employee_id FROM meeting_responses
+		WHERE meeting_id = ANY($1) AND status <> 'declined'
+	`, meetingIDs); qerr == nil {
+		for rows.Next() {
+			var mid, eid uuid.UUID
+			if err := rows.Scan(&mid, &eid); err == nil {
+				if d := dataByID[mid]; d != nil {
+					d.empIDs = append(d.empIDs, eid)
+				}
+			}
+		}
+		rows.Close()
+	}
+
+	// 3. Подгружаем все остальные мои встречи (не только candidates) того же
+	// horizon, чтобы детектить «3 встречи подряд» и double-booking.
+	mySlots := make([]struct{ start, end time.Time }, 0, len(candidates))
+	for _, m := range candidates {
+		mySlots = append(mySlots, struct{ start, end time.Time }{m.StartAt, m.EndAt})
+	}
+
+	// 4. Оцениваем каждый кандидат.
+	out := make([]SuggestedReschedule, 0, len(candidates))
+	for _, m := range candidates {
+		d := dataByID[m.ID]
+		score := 0
+		reasons := []string{}
+
+		// 4a. Перегруз дня участника.
+		overloadedCount := s.countDayOverloadedParticipants(ctx, m.StartAt, d.empIDs, m.ID)
+		if overloadedCount > 0 {
+			score += 30 * overloadedCount
+			reasons = append(reasons, fmt.Sprintf("у %d участников этот день перегружен встречами", overloadedCount))
+		}
+
+		// 4b. Double-booking — пересечение с другой моей встречей.
+		hasOverlap := false
+		for _, s := range mySlots {
+			if s.start.Equal(m.StartAt) && s.end.Equal(m.EndAt) {
+				continue // та же встреча
+			}
+			if m.StartAt.Before(s.end) && s.start.Before(m.EndAt) {
+				hasOverlap = true
+				break
+			}
+		}
+		if hasOverlap {
+			score += 50
+			reasons = append(reasons, "пересекается с другой твоей встречей")
+		}
+
+		// 4c. «Нет перерыва» — 3+ встречи в окне +-1.5ч от этой.
+		windowStart := m.StartAt.Add(-90 * time.Minute)
+		windowEnd := m.EndAt.Add(90 * time.Minute)
+		neighborhood := 0
+		for _, s := range mySlots {
+			if s.start.Before(windowEnd) && windowStart.Before(s.end) {
+				neighborhood++
+			}
+		}
+		if neighborhood >= 3 {
+			score += 20
+			reasons = append(reasons, "в этот промежуток 3+ встречи подряд без перерыва")
+		}
+
+		// 4d. Легко переносимая категория.
+		switch d.category {
+		case "Стендапы", "1:1":
+			score += 15
+			reasons = append(reasons, "тип встречи легко переносится")
+		}
+
+		if score == 0 {
+			continue
+		}
+		out = append(out, SuggestedReschedule{
+			MeetingID: m.ID,
+			Title:     m.Title,
+			StartAt:   m.StartAt,
+			EndAt:     m.EndAt,
+			TeamName:  m.TeamName,
+			Category:  d.category,
+			Score:     score,
+			Reasons:   reasons,
+		})
+	}
+
+	// 5. Сортировка по score desc.
+	sortSuggested(out)
+	if len(out) > topN {
+		out = out[:topN]
+	}
+	return out, nil
+}
+
+// countDayOverloadedParticipants — для каждого участника emp_id смотрит
+// сколько у него часов встреч в день этой встречи (в TZ сотрудника), кроме
+// task-блоков и кроме оцениваемой встречи. Если > 5ч — считаем перегруженным.
+// Возвращает количество таких участников.
+func (s *MeetingProposalService) countDayOverloadedParticipants(
+	ctx context.Context,
+	startAt time.Time,
+	empIDs []uuid.UUID,
+	excludeMeetingID uuid.UUID,
+) int {
+	if len(empIDs) == 0 {
+		return 0
+	}
+	const dayOverloadThresholdHours = 5.0
+	overloaded := 0
+	for _, empID := range empIDs {
+		loc := time.UTC
+		if profile, perr := s.profiles.Active(ctx, empID); perr == nil && profile != nil {
+			if l, lerr := time.LoadLocation(profile.Timezone); lerr == nil && l != nil {
+				loc = l
+			}
+		}
+		local := startAt.In(loc)
+		dayStart := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
+		dayEnd := dayStart.Add(24 * time.Hour)
+
+		var minutes float64
+		err := s.pool.QueryRow(ctx, `
+			SELECT COALESCE(SUM(
+				EXTRACT(EPOCH FROM (
+					LEAST(end_at, $3::timestamptz) - GREATEST(start_at, $2::timestamptz)
+				)) / 60
+			), 0)::float8
+			FROM calendar_events ce
+			WHERE ce.employee_id = $1
+			  AND ce.is_excluded = false
+			  AND ce.status <> 'cancelled'
+			  AND ce.start_at < $3::timestamptz
+			  AND ce.end_at > $2::timestamptz
+			  AND (ce.category IS NULL
+			       OR ce.category NOT IN ('Фокус-время', 'Задача', 'План задачи'))
+			  AND NOT (ce.source_event_id LIKE 'meeting-' || $4::text || '-%')
+		`, empID, dayStart.UTC(), dayEnd.UTC(), excludeMeetingID).Scan(&minutes)
+		if err != nil {
+			continue
+		}
+		if minutes/60 > dayOverloadThresholdHours {
+			overloaded++
+		}
+	}
+	return overloaded
+}
+
+// sortSuggested — in-place сортировка по score desc, при равенстве — по start_at asc.
+func sortSuggested(arr []SuggestedReschedule) {
+	for i := 1; i < len(arr); i++ {
+		for j := i; j > 0; j-- {
+			if arr[j].Score > arr[j-1].Score ||
+				(arr[j].Score == arr[j-1].Score && arr[j].StartAt.Before(arr[j-1].StartAt)) {
+				arr[j], arr[j-1] = arr[j-1], arr[j]
+				continue
+			}
+			break
+		}
+	}
+}

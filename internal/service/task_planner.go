@@ -347,7 +347,7 @@ func (s *TaskPlannerService) createTaskBlock(
 	// видели созданный блок как занятый интервал.
 	busyByDay[dayKey] = append(busy, timeRange{Start: startAt, End: endAt})
 
-	prefix := "План"
+	prefix := "Задача"
 	if category == FocusCategoryName {
 		prefix = "Фокус"
 	}

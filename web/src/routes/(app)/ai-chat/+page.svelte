@@ -27,7 +27,9 @@
 	import {
 		listMyMeetings,
 		updateMeeting,
-		type MyMeeting
+		suggestReschedule,
+		type MyMeeting,
+		type SuggestedReschedule
 	} from '$lib/api/meetings';
 	import { notifyStaleEmployees } from '$lib/api/hr';
 	import { broadcastNotifications, type BroadcastKind } from '$lib/api/notifications';
@@ -254,7 +256,8 @@
 		const out: MsgAction[] = [];
 
 		// Темы — порядок важен: первая совпавшая определяет первые кнопки.
-		const stale = /устаревш|неактуальн|давно не обнов|не обновл/.test(haystack);
+		const stale =
+			/устаревш|устарел|неактуальн|давно не обнов|не обновл|без обновлен|дней без обнов/.test(haystack);
 		const overload = /перегруж|перегруз|высокая нагрузк|высок.* загруз|загружен/.test(haystack);
 		const conflict = /конфликт|вне рабоч|вне график/.test(haystack);
 		const availability = /доступн|общее окно|когда .* команд|собрать команд/.test(haystack);
@@ -410,9 +413,11 @@
 		}
 
 		// Excel — общий хвост, если ответ напоминает список людей/событий
-		// и при этом нет уже specifics-кнопки экспорта.
+		// и при этом для темы есть готовый пресет на бэке: stale_profiles
+		// и conflicts. Под overload пресета нет — кнопку не вешаем, чтобы
+		// не открывать меню без нужного варианта.
 		const looksLikeList = /список|перечен|вот \w+ сотрудник|^\s*[—\-*]/m.test(llmReply);
-		if (looksLikeList && (stale || overload || conflict)) {
+		if (looksLikeList && (stale || conflict)) {
 			out.push({
 				label: 'Выгрузить в Excel',
 				variant: 'ghost',
@@ -471,6 +476,14 @@
 				void flowRescheduleStart();
 			});
 			return;
+		} else if (intent.kind === 'reschedule_suggest') {
+			// «Какие лучше перенести?» — отдельный flow, который анализирует
+			// расписание и предлагает топ-3 с обоснованием.
+			tick().then(() => {
+				scrollDown();
+				void flowSuggestReschedule();
+			});
+			return;
 		}
 
 		messages.push(newMsg({ role: 'assistant', content, actions }));
@@ -499,10 +512,21 @@
 		| { kind: 'meeting'; durationMin: number }
 		| { kind: 'notify_stale' }
 		| { kind: 'export'; hint: ExportHint; kinds?: string[] }
-		| { kind: 'reschedule' };
+		| { kind: 'reschedule' }
+		| { kind: 'reschedule_suggest' };
 
 	function detectIntent(text: string): Intent {
 		const t = text.toLowerCase();
+
+		// «Какие встречи лучше перенести?» / «что стоит перенести» — это запрос
+		// на АНАЛИЗ, а не на действие. Проверяем РАНЬШЕ обычного reschedule,
+		// чтобы вопрос не уехал в «перенеси конкретную». Триггер — слова
+		// «какие/какую/что» рядом со словом про перенос.
+		const askSuggestRe =
+			/(?:как[аи][яе]|что|стоит|посоветуй|порекоменд)\s+(?:[\wа-яё ]{0,20})?(?:перенест|перенес[аю]|сдвин|переложит)/;
+		if (askSuggestRe.test(t)) {
+			return { kind: 'reschedule_suggest' };
+		}
 
 		// «Перенести встречу» — пробуем РАНЬШЕ «meeting», т.к. слово «встречу»
 		// есть в обоих, а перенос всегда более конкретный.
@@ -1006,6 +1030,85 @@
 				actions: exportActions('any')
 			})
 		);
+	}
+
+	// --- Flow: умный совет «какую встречу перенести» ---
+
+	// flowSuggestReschedule — тянет с бэка топ-3 кандидата с обоснованием
+	// и показывает их кнопками. Клик → существующий flowRescheduleChooseWindow,
+	// который ищет окна и предлагает перенос. Если кандидатов нет — говорим
+	// что переносить нечего и подкидываем стандартный flow.
+	async function flowSuggestReschedule() {
+		messages.push(
+			newMsg({
+				role: 'assistant',
+				content: 'Смотрю твоё расписание на неделю…'
+			})
+		);
+		const idx = messages.length - 1;
+		await tick();
+		scrollDown();
+
+		let suggestions: SuggestedReschedule[] = [];
+		try {
+			const r = await suggestReschedule({ days: 7, top: 3 });
+			suggestions = r.suggestions ?? [];
+		} catch (e) {
+			messages[idx] = {
+				...messages[idx],
+				content: `Не получилось проанализировать: ${errStr(e)}`
+			};
+			return;
+		}
+
+		if (suggestions.length === 0) {
+			messages[idx] = {
+				...messages[idx],
+				content:
+					'У тебя на этой неделе нет встреч, которые система оценивает как «надо переносить» — нет перегрузов, нет накладок, нет встреч без перерыва. Если всё равно хочешь подвинуть что-то конкретное — скажи «перенеси встречу».'
+			};
+			return;
+		}
+
+		// Сборка человекочитаемого ответа: список с обоснованием.
+		// Имена кнопок — title + время. Под кнопкой подписи (reasons).
+		const lines: string[] = [];
+		lines.push(
+			suggestions.length === 1
+				? 'Нашлась одна встреча, которую стоит перенести:'
+				: `Вот ${suggestions.length} встреч, которые стоит перенести в первую очередь:`
+		);
+		for (const s of suggestions) {
+			lines.push(`\n**${s.title}** · ${fmtWinFromIso(s.start_at, s.end_at)}`);
+			for (const r of s.reasons) {
+				lines.push(`— ${r}`);
+			}
+		}
+
+		messages[idx] = {
+			...messages[idx],
+			content: lines.join('\n'),
+			actions: suggestions.map<MsgAction>((s) => ({
+				label: `Перенести «${shorten(s.title, 30)}»`,
+				variant: 'primary',
+				icon: 'ti-calendar-event',
+				kind: 'pick_meeting_to_move',
+				payload: { meeting_id: s.meeting_id }
+			}))
+		};
+		// rescheduleCache нужен flowRescheduleChooseWindow — подзагрузим ListMy
+		// чтобы клик по кнопке сразу нашёл duration и team_id.
+		try {
+			const r = await listMyMeetings();
+			rescheduleCache = (r.meetings ?? []).filter((m) => m.can_cancel && m.team_id);
+		} catch {
+			// ignore — flowRescheduleChooseWindow сам обработает отсутствие
+		}
+	}
+
+	function shorten(s: string, max: number): string {
+		if (s.length <= max) return s;
+		return s.slice(0, max - 1) + '…';
 	}
 
 	// --- Flow: перенести встречу ---

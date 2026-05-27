@@ -27,10 +27,51 @@ func (h *MeetingsHandler) Mount(r fiber.Router) {
 	g.Get("/my", h.list)
 	g.Get("/incoming", h.incoming)
 	g.Post("/check-conflicts", h.checkConflicts)
+	g.Get("/suggest-reschedule", h.suggestReschedule)
 	g.Get("/:id/responses", h.responses)
 	g.Post("/:id/respond", h.respond)
 	g.Put("/:id", h.update)
 	g.Delete("/:id", h.cancel)
+}
+
+// suggestReschedule — топ-N встреч viewer'а, которые лучше всего перенести,
+// с обоснованием. См. service.SuggestReschedule.
+//
+//	GET /meetings/suggest-reschedule?days=7&top=3
+func (h *MeetingsHandler) suggestReschedule(c fiber.Ctx) error {
+	userID := middleware.UserID(c)
+	empID := middleware.EmployeeID(c)
+	role := middleware.CurrentRole(c)
+	if userID == uuid.Nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "no user")
+	}
+	days := atoiOr(c.Query("days"), 7)
+	topN := atoiOr(c.Query("top"), 3)
+	res, err := h.proposal.SuggestReschedule(c.Context(), userID, empID, role, days, topN)
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"suggestions": res})
+}
+
+func atoiOr(s string, def int) int {
+	if s == "" {
+		return def
+	}
+	n := 0
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return def
+		}
+		n = n*10 + int(r-'0')
+		if n > 1000 {
+			return def
+		}
+	}
+	if n == 0 {
+		return def
+	}
+	return n
 }
 
 // checkConflictsRequest — body для POST /meetings/check-conflicts.
