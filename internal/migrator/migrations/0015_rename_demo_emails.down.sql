@@ -1,5 +1,5 @@
 -- Откат email к старым значениям (инверсия up).
-UPDATE users SET email = 'anna@worktime.local'   WHERE email = 'malchevsky@iqj.app';
+UPDATE users SET email = 'anna@worktime.local'   WHERE email = 'maxim@iqj.app';
 UPDATE users SET email = 'maria@worktime.local'  WHERE email = 'zharov@iqj.app';
 UPDATE users SET email = 'lena@worktime.local'   WHERE email = 'postnikov@iqj.app';
 UPDATE users SET email = 'sergey@worktime.local' WHERE email = 'plamadil@worktime.local';

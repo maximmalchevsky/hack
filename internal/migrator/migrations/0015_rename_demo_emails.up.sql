@@ -1,6 +1,6 @@
 
 
-UPDATE users SET email = 'malchevsky@iqj.app'    WHERE email = 'anna@worktime.local';
+UPDATE users SET email = 'maxim@iqj.app'    WHERE email = 'anna@worktime.local';
 UPDATE users SET email = 'zharov@iqj.app'   WHERE email = 'maria@worktime.local';
 UPDATE users SET email = 'postnikov@iqj.app' WHERE email = 'lena@worktime.local';
 UPDATE users SET email = 'plamadil@worktime.local'     WHERE email = 'sergey@worktime.local';
