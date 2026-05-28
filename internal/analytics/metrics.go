@@ -48,6 +48,12 @@ func Freshness(days, dDays int) float64 {
 // ConflictsRatio — C. Доля событий, попадающих ВНЕ окна work_profile.
 // Учитывает исключения (отпуск/больничный/командировка) — события в эти окна
 // считаются "разрешёнными" (тоже не конфликт).
+// ConflictsRatio — C. Доля «конфликтных» событий от всех активных.
+// Событие считается конфликтным, если выполняется ХОТЯ БЫ ОДНО:
+//   - оно вне заявленных рабочих часов (и не покрыто исключением);
+//   - оно пересекается по времени с другим событием (double-booking /
+//     наслоение встреч).
+// Каждое событие учитывается в числителе максимум один раз.
 func ConflictsRatio(events []domain.CalendarEvent, profile *domain.WorkProfile, exceptions []domain.TimeException) float64 {
 	if len(events) == 0 || profile == nil {
 		return 0
@@ -57,26 +63,45 @@ func ConflictsRatio(events []domain.CalendarEvent, profile *domain.WorkProfile, 
 		loc = time.UTC
 	}
 
-	out := 0
-	total := 0
+	// Собираем активные события (без отменённых/исключённых).
+	active := make([]domain.CalendarEvent, 0, len(events))
 	for _, ev := range events {
 		if ev.IsExcluded || ev.Status == domain.EventCancelled {
 			continue
 		}
-		total++
+		active = append(active, ev)
+	}
+	if len(active) == 0 {
+		return 0
+	}
 
-		// Если событие попадает в исключение — это не конфликт.
-		if inException(ev, exceptions) {
-			continue
+	// Множество индексов событий, пересекающихся хотя бы с одним другим.
+	overlapping := make(map[int]bool, len(active))
+	for i := 0; i < len(active); i++ {
+		for j := i + 1; j < len(active); j++ {
+			if active[i].StartAt.Before(active[j].EndAt) && active[j].StartAt.Before(active[i].EndAt) {
+				overlapping[i] = true
+				overlapping[j] = true
+			}
 		}
-		if !insideWorkHours(ev, profile, loc) {
+	}
+
+	out := 0
+	for i, ev := range active {
+		conflict := false
+		// Вне рабочих часов (и не покрыто исключением вроде отпуска).
+		if !inException(ev, exceptions) && !insideWorkHours(ev, profile, loc) {
+			conflict = true
+		}
+		// Наслоение на другую встречу.
+		if overlapping[i] {
+			conflict = true
+		}
+		if conflict {
 			out++
 		}
 	}
-	if total == 0 {
-		return 0
-	}
-	return float64(out) / float64(total)
+	return float64(out) / float64(len(active))
 }
 
 // Load — L. Сумма часов занятости / часы рабочего профиля за окно.
