@@ -1600,8 +1600,8 @@
 </div>
 
 <div class="grid-2-1" style="height: calc(100vh - 200px);">
-	<Card padded={false} title="Чат">
-		<div bind:this={scrollEl} onscroll={onScrollList} style="height: calc(100% - 80px); overflow-y: auto; padding: 12px;">
+	<Card padded={false} title="Чат" fill>
+		<div bind:this={scrollEl} onscroll={onScrollList} style="flex: 1; min-height: 0; overflow-y: auto; padding: 12px;">
 			{#if messages.length === 0}
 				<div class="text-text-3 text-sm" style="text-align: center; padding: 32px;">
 					Введите вопрос или выберите шаблон
@@ -1658,7 +1658,7 @@
 		</div>
 
 		<div
-			style="padding: 12px; border-top: 0.5px solid var(--border); display: flex; gap: 8px;"
+			style="padding: 12px; border-top: 0.5px solid var(--border); display: flex; gap: 8px; flex-shrink: 0;"
 		>
 			<input
 				type="text"
@@ -1677,8 +1677,8 @@
 		</div>
 	</Card>
 
-	<Card title="Быстрые вопросы">
-		<div class="space-y-2">
+	<Card title="Быстрые вопросы" fill>
+		<div class="space-y-2" style="flex: 1; min-height: 0; overflow-y: auto;">
 			{#each suggestions as s (s)}
 				<button
 					class="btn btn--ghost"
@@ -1694,7 +1694,7 @@
 
 		<div
 			class="text-text-3 text-xs"
-			style="margin-top: 16px; padding-top: 12px; border-top: 0.5px solid var(--border);"
+			style="margin-top: 16px; padding-top: 12px; border-top: 0.5px solid var(--border); flex-shrink: 0;"
 		>
 			Спросите про окно для встречи — предложу запланировать и разошлю уведомления участникам.
 		</div>

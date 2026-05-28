@@ -7,16 +7,20 @@
 		subtitle?: string;
 		caption?: string;
 		padded?: boolean;
+		// fill — растянуть карточку на всю высоту родителя (flex-column).
+		// Контент тогда сам распределяет высоту: используется в чате, где лента
+		// сообщений должна скроллиться внутри, а инпут — прилипать к низу.
+		fill?: boolean;
 		// Если задан — рядом с title появится (i) с расшифровкой метрики.
 		metricLetter?: 'A' | 'C' | 'L' | 'Z' | 'H' | 'R';
 		actions?: Snippet;
 		children?: Snippet;
 	}
 
-	let { title, subtitle, caption, padded = false, metricLetter, actions, children }: Props = $props();
+	let { title, subtitle, caption, padded = false, fill = false, metricLetter, actions, children }: Props = $props();
 </script>
 
-<div class="card {padded ? 'card--padded' : ''}">
+<div class="card {padded ? 'card--padded' : ''} {fill ? 'card--fill' : ''}">
 	{#if title || subtitle || caption || actions}
 		<div class="card__header">
 			<div>

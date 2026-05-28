@@ -114,6 +114,17 @@
 .card--padded {
 	padding: 20px;
 }
+/* card--fill — карточка на всю высоту grid-ячейки, контент распределяется flex'ом.
+   Прямой ребёнок-контент (после header) с flex:1 заберёт остаток и заскроллится. */
+.card--fill {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+}
+.card--fill > .card__header {
+	flex-shrink: 0;
+}
 .card__header {
 	display: flex;
 	align-items: center;
