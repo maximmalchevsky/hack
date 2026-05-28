@@ -166,15 +166,15 @@ func generateEventsFor(p demoPerson, empID uuid.UUID) []demoEvent {
 
 func pickScenario(email string) string {
 	switch email {
-	case "igor@worktime.local":
+	case "igor@worktime.local": // Игорь Климов
 		return "overloaded"
-	case "sergey@worktime.local":
+	case "oleg@worktime.local": // Олег Пламадил (NSK, TZ-drift)
 		return "tzdrift"
-	case "dmitry@worktime.local":
+	case "daniil.i@worktime.local": // Даниил Игаев (LIS, HR-mismatch)
 		return "hr_mismatch"
-	case "anna@worktime.local":
+	case "maxim@worktime.local": // Максим Малчевский
 		return "weekend_burn"
-	case "olga@worktime.local":
+	case "alexandr@worktime.local": // Александр Петров (аналитик)
 		return "sparse"
 	default:
 		return "healthy"
