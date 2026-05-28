@@ -12,9 +12,6 @@ import (
 	"worktimesync/internal/ai"
 )
 
-// TimeBreakdownService — «куда уходит время».
-// Категория события хранится в calendar_events.category. Если её нет — заполняется
-// через GigaChat (batch) при первом подсчёте, результат кэшируется в БД.
 type TimeBreakdownService struct {
 	pool *pgxpool.Pool
 	llm  ai.Client
@@ -24,9 +21,6 @@ func NewTimeBreakdownService(pool *pgxpool.Pool, llm ai.Client) *TimeBreakdownSe
 	return &TimeBreakdownService{pool: pool, llm: llm}
 }
 
-// TimeBreakdownCategories — фиксированный список значений (тех же, что показывает UI).
-// Любая встреча должна попасть в одну из них. Экспортируется наружу для
-// валидации в handler'ах (например, при ручной смене категории).
 var TimeBreakdownCategories = []string{
 	"Стендапы",
 	"1:1",
@@ -37,7 +31,6 @@ var TimeBreakdownCategories = []string{
 	"Другое",
 }
 
-// BreakdownItem — кусок диаграммы.
 type BreakdownItem struct {
 	Category string  `json:"category"`
 	Minutes  int     `json:"minutes"`
@@ -46,7 +39,6 @@ type BreakdownItem struct {
 	Percent  float64 `json:"percent"`
 }
 
-// Result — итог для одного сотрудника за период.
 type TimeBreakdownResult struct {
 	From         time.Time       `json:"from"`
 	To           time.Time       `json:"to"`
@@ -55,8 +47,6 @@ type TimeBreakdownResult struct {
 	Items        []BreakdownItem `json:"items"`
 }
 
-// BuildForTeam — то же что Build, но по агрегату всех team_members.
-// RBAC — на уровне handler.
 func (s *TimeBreakdownService) BuildForTeam(ctx context.Context, teamID uuid.UUID, days int) (TimeBreakdownResult, error) {
 	from, to := windowDays(days)
 	rows, err := s.pool.Query(ctx, `
@@ -73,7 +63,6 @@ func (s *TimeBreakdownService) BuildForTeam(ctx context.Context, teamID uuid.UUI
 	return s.aggregate(ctx, rows, from, to)
 }
 
-// Build — за `days` дней назад от now() для сотрудника empID.
 func (s *TimeBreakdownService) Build(ctx context.Context, empID uuid.UUID, days int) (TimeBreakdownResult, error) {
 	from, to := windowDays(days)
 	rows, err := s.pool.Query(ctx, `
@@ -96,10 +85,6 @@ func windowDays(days int) (time.Time, time.Time) {
 	return time.Now().AddDate(0, 0, -days), time.Now()
 }
 
-// aggregate — главный pipeline:
-//  1. читаем строки (id, title, start, end, category)
-//  2. для тех у кого category пустая — батч-запрос в GigaChat, кэшируем в БД
-//  3. суммируем по категориям
 func (s *TimeBreakdownService) aggregate(ctx context.Context, rows interface {
 	Next() bool
 	Close()
@@ -115,7 +100,7 @@ func (s *TimeBreakdownService) aggregate(ctx context.Context, rows interface {
 		category *string
 	}
 	var data []row
-	uncategorized := map[string]bool{} // title → нужна категоризация
+	uncategorized := map[string]bool{}
 
 	for rows.Next() {
 		var (
@@ -141,7 +126,6 @@ func (s *TimeBreakdownService) aggregate(ctx context.Context, rows interface {
 		return TimeBreakdownResult{From: from, To: to, Items: []BreakdownItem{}}, err
 	}
 
-	// Запросим у AI категории для тех title, где их ещё нет. Возвращает map[title]category.
 	classified := map[string]string{}
 	if len(uncategorized) > 0 && s.llm != nil {
 		titles := make([]string, 0, len(uncategorized))
@@ -149,11 +133,9 @@ func (s *TimeBreakdownService) aggregate(ctx context.Context, rows interface {
 			titles = append(titles, t)
 		}
 		classified = s.classifyWithAI(ctx, titles)
-		// Сохраним результаты в БД, чтобы в следующий раз не дёргать LLM.
 		s.cacheCategories(ctx, classified)
 	}
 
-	// Финальная агрегация.
 	type agg struct {
 		minutes int
 		count   int
@@ -200,7 +182,6 @@ func (s *TimeBreakdownService) aggregate(ctx context.Context, rows interface {
 		})
 	}
 
-	// sort by minutes desc
 	for i := 0; i < len(out.Items); i++ {
 		for j := i + 1; j < len(out.Items); j++ {
 			if out.Items[j].Minutes > out.Items[i].Minutes {
@@ -211,12 +192,9 @@ func (s *TimeBreakdownService) aggregate(ctx context.Context, rows interface {
 	return out, nil
 }
 
-// classifyWithAI — батч-запрос: список title → map title→category.
-// При сбое LLM возвращает пустой map (всё уйдёт в «Другое»).
 func (s *TimeBreakdownService) classifyWithAI(ctx context.Context, titles []string) map[string]string {
 	out := map[string]string{}
 
-	// Лимит на батч, чтобы не упереться в context window. 50 — разумно.
 	const batchSize = 50
 	for i := 0; i < len(titles); i += batchSize {
 		end := min(i+batchSize, len(titles))
@@ -256,10 +234,8 @@ func (s *TimeBreakdownService) classifyWithAI(ctx context.Context, titles []stri
 			continue
 		}
 
-		// Парсим JSON-массив строк длиной len(chunk). При несовпадении длины — пропускаем.
 		var labels []string
 		raw := strings.TrimSpace(resp.Content)
-		// На случай если модель обернула в ```json ... ```
 		raw = strings.TrimPrefix(raw, "```json")
 		raw = strings.TrimPrefix(raw, "```")
 		raw = strings.TrimSuffix(raw, "```")
@@ -276,8 +252,6 @@ func (s *TimeBreakdownService) classifyWithAI(ctx context.Context, titles []stri
 	return out
 }
 
-// validateCategory — приводит ответ LLM к каноничному значению из TimeBreakdownCategories.
-// Защита от «галлюцинаций» — если модель вернула что-то своё, ставим «Другое».
 func validateCategory(s string) string {
 	s = strings.TrimSpace(s)
 	for _, c := range TimeBreakdownCategories {
@@ -288,8 +262,6 @@ func validateCategory(s string) string {
 	return "Другое"
 }
 
-// cacheCategories — сохраняет результаты классификации в calendar_events.category
-// для ВСЕХ событий с такими title (даже у разных сотрудников).
 func (s *TimeBreakdownService) cacheCategories(ctx context.Context, m map[string]string) {
 	if len(m) == 0 {
 		return

@@ -22,16 +22,12 @@ func NewTeamHandler(svc *service.TeamService, proposal *service.MeetingProposalS
 }
 
 type ProposeMeetingRequest struct {
-	StartAt  time.Time `json:"start_at"`
-	EndAt    time.Time `json:"end_at"`
-	Title    string    `json:"title,omitempty"`
-	Category string    `json:"category,omitempty"` // пусто = «определить автоматически»
-	// InviteeEmpIDs — опциональный список для межкомандной встречи.
-	// Если задан — заменяет состав команды из URL.
+	StartAt       time.Time   `json:"start_at"`
+	EndAt         time.Time   `json:"end_at"`
+	Title         string      `json:"title,omitempty"`
+	Category      string      `json:"category,omitempty"`
 	InviteeEmpIDs []uuid.UUID `json:"invitee_emp_ids,omitempty"`
-	// Force — обходит soft-block анти-burnout. Используется UI после показа
-	// предупреждения о перегрузе и явного подтверждения от инициатора.
-	Force bool `json:"force,omitempty"`
+	Force         bool        `json:"force,omitempty"`
 }
 
 func (h *TeamHandler) proposeMeeting(c fiber.Ctx) error {
@@ -63,12 +59,6 @@ func (h *TeamHandler) proposeMeeting(c fiber.Ctx) error {
 	return c.JSON(res)
 }
 
-// mapProposeErr — общий маппер ошибок Propose для двух handler'ов
-// (командный и межкомандный).
-//
-// При перегрузе (ErrMeetingOverload) отвечаем 409 c JSON-телом
-// {error, overload: [...]}, чтобы UI мог показать конкретику и при подтверждении
-// пересоздать с force=true.
 func mapProposeErr(c fiber.Ctx, err error) error {
 	var od *service.OverloadDetails
 	if errors.As(err, &od) {
@@ -84,8 +74,6 @@ func mapProposeErr(c fiber.Ctx, err error) error {
 	}
 	return err
 }
-
-// --- межкомандная встреча: find-window + propose без привязки к одной команде ---
 
 type CrossFindWindowRequest struct {
 	EmployeeIDs []uuid.UUID `json:"employee_ids"`
@@ -114,18 +102,14 @@ func (h *TeamHandler) crossFindWindow(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"windows": windows})
 }
 
-// CrossProposeRequest — создание межкомандной встречи без TeamID в URL.
 type CrossProposeRequest struct {
 	StartAt       time.Time   `json:"start_at"`
 	EndAt         time.Time   `json:"end_at"`
 	Title         string      `json:"title,omitempty"`
 	Category      string      `json:"category,omitempty"`
 	EmployeeIDs   []uuid.UUID `json:"employee_ids"`
-	// PrimaryTeamID опционально — какая команда «главная» для отображения.
-	// Если пуст — TeamName = «Несколько команд».
-	PrimaryTeamID *uuid.UUID `json:"primary_team_id,omitempty"`
-	// Force — обходит soft-block анти-burnout.
-	Force bool `json:"force,omitempty"`
+	PrimaryTeamID *uuid.UUID  `json:"primary_team_id,omitempty"`
+	Force         bool        `json:"force,omitempty"`
 }
 
 func (h *TeamHandler) crossProposeMeeting(c fiber.Ctx) error {
@@ -175,17 +159,12 @@ func (h *TeamHandler) Mount(r fiber.Router) {
 	g.Post("/:id/find-window", h.findWindow)
 	g.Post("/:id/propose-meeting", h.proposeMeeting)
 
-	// Межкомандные встречи — без team_id в URL.
 	cross := r.Group("/cross-team-meetings")
 	cross.Post("/find-window", h.crossFindWindow)
 	cross.Post("/propose", h.crossProposeMeeting)
-	// Список всех команд — чтобы менеджер мог выбрать чужую команду для
-	// межкомандной встречи (стандартный /teams возвращает только свои).
 	cross.Get("/teams", h.listAllTeams)
 }
 
-// listAllTeams — GET /cross-team-meetings/teams. Все команды организации
-// для multi-select в межкомандном режиме на /scheduler. RBAC внутри сервиса.
 func (h *TeamHandler) listAllTeams(c fiber.Ctx) error {
 	role := string(middleware.CurrentRole(c))
 	list, err := h.svc.ListAllForMeetings(c.Context(), role)
@@ -204,8 +183,6 @@ func (h *TeamHandler) listAllTeams(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"teams": out})
 }
 
-// --- write endpoints ---
-
 type CreateTeamRequest struct {
 	Name       string     `json:"name"`
 	OwnerEmpID *uuid.UUID `json:"owner_employee_id,omitempty"`
@@ -214,9 +191,6 @@ type CreateTeamRequest struct {
 type UpdateTeamRequest struct {
 	Name       *string    `json:"name,omitempty"`
 	OwnerEmpID *uuid.UUID `json:"owner_employee_id,omitempty"`
-	// OwnerSet=true означает что поле owner_employee_id присутствовало в запросе
-	// (для возможности отвязать владельца через null). Клиенту проще передавать
-	// {"owner_employee_id": null} — мы это распарсим как nil + OwnerSet=true.
 }
 
 type AddMemberRequest struct {
@@ -249,7 +223,6 @@ func (h *TeamHandler) update(c fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid id")
 	}
-	// Парсим вручную, чтобы отличить отсутствующее поле от null.
 	raw := map[string]any{}
 	if err := c.Bind().Body(&raw); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
@@ -364,7 +337,6 @@ func teamToDTO(t *domain.Team) fiber.Map {
 	}
 }
 
-// FindWindowRequest — параметры в теле POST.
 type FindWindowRequest struct {
 	DurationMin int    `json:"duration_min"`
 	Days        int    `json:"days"`
@@ -469,6 +441,5 @@ func (h *TeamHandler) availability(c fiber.Ctx) error {
 	return c.JSON(resp)
 }
 
-// silence unused
 var _ = time.Time{}
 var _ = middleware.UserID

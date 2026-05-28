@@ -94,7 +94,6 @@ func (r *TeamRepo) Members(ctx context.Context, teamID uuid.UUID) ([]domain.Team
 	return out, rows.Err()
 }
 
-// Create — добавляет команду. ownerID может быть nil.
 func (r *TeamRepo) Create(ctx context.Context, name string, ownerID *uuid.UUID) (*domain.Team, error) {
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO teams (name, owner_id) VALUES ($1, $2)
@@ -103,9 +102,7 @@ func (r *TeamRepo) Create(ctx context.Context, name string, ownerID *uuid.UUID) 
 	return scanTeam(row)
 }
 
-// Update — переименование и/или смена владельца.
 func (r *TeamRepo) Update(ctx context.Context, id uuid.UUID, name *string, ownerID *uuid.UUID, ownerSet bool) (*domain.Team, error) {
-	// собираем динамический SET — нельзя обновлять nil-полем безусловно.
 	q := `UPDATE teams SET updated_at = now()`
 	args := []any{id}
 	if name != nil {
@@ -113,7 +110,7 @@ func (r *TeamRepo) Update(ctx context.Context, id uuid.UUID, name *string, owner
 		q += `, name = $` + itoa(len(args))
 	}
 	if ownerSet {
-		args = append(args, ownerID) // может быть nil → SET NULL
+		args = append(args, ownerID)
 		q += `, owner_id = $` + itoa(len(args))
 	}
 	q += ` WHERE id = $1 RETURNING id, name, owner_id, created_at, updated_at`
@@ -140,7 +137,6 @@ func (r *TeamRepo) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// AddMember — идемпотентно (ON CONFLICT DO NOTHING).
 func (r *TeamRepo) AddMember(ctx context.Context, teamID, employeeID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		INSERT INTO team_members (team_id, employee_id) VALUES ($1, $2)
@@ -162,9 +158,6 @@ func (r *TeamRepo) RemoveMember(ctx context.Context, teamID, employeeID uuid.UUI
 	return nil
 }
 
-// SetManagerForMembers — назначает managerID руководителем всех участников
-// команды, кроме самого managerID. Используется со страницы /teams чтобы
-// заработал scope=team в рекомендациях.
 func (r *TeamRepo) SetManagerForMembers(ctx context.Context, teamID, managerEmpID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE employees
@@ -175,7 +168,6 @@ func (r *TeamRepo) SetManagerForMembers(ctx context.Context, teamID, managerEmpI
 	return err
 }
 
-// itoa — мини-helper, чтобы не тянуть strconv ради одного места.
 func itoa(n int) string {
 	if n == 0 {
 		return "0"

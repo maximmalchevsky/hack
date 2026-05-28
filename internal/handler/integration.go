@@ -17,13 +17,12 @@ import (
 	"worktimesync/internal/workers"
 )
 
-// IntegrationHandler — /api/v1/integrations/*.
 type IntegrationHandler struct {
 	svc      *service.IntegrationService
 	enqueuer *workers.Enqueuer
-	yandex   *yandex.Provider // nil если OAuth Яндекса не настроен
-	redis    *redis.Client    // для хранения state в OAuth-flow
-	frontURL string           // куда редиректить после callback
+	yandex   *yandex.Provider
+	redis    *redis.Client
+	frontURL string
 }
 
 func NewIntegrationHandler(
@@ -53,15 +52,10 @@ func (h *IntegrationHandler) Mount(r fiber.Router) {
 	g.Delete("/:id", h.delete)
 }
 
-// MountPublic — публичные роуты OAuth-callback'ов (без AuthRequired):
-// Яндекс редиректит сюда из браузера, у него нет нашего JWT.
-// Сессионная связь восстанавливается через state в Redis.
 func (h *IntegrationHandler) MountPublic(r fiber.Router) {
 	r.Get("/integrations/oauth/callback/yandex", h.yandexCallback)
 }
 
-// yandexConnect — авторизованный пользователь нажал «Войти через Яндекс».
-// Кладём в Redis state → user_id+employee_id, делаем 302 на oauth.yandex.ru.
 func (h *IntegrationHandler) yandexConnect(c fiber.Ctx) error {
 	if h.yandex == nil {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "yandex oauth not configured")
@@ -79,9 +73,6 @@ func (h *IntegrationHandler) yandexConnect(c fiber.Ctx) error {
 	return c.Redirect().To(h.yandex.AuthURL(state))
 }
 
-// yandexCallback — Яндекс редиректит сюда с code+state. Восстанавливаем сессию
-// по state, меняем code на токены, сохраняем integration, enqueue backfill,
-// редиректим обратно в UI.
 func (h *IntegrationHandler) yandexCallback(c fiber.Ctx) error {
 	if h.yandex == nil {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "yandex oauth not configured")

@@ -8,7 +8,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// AuditRepo — журнал изменений. Кто, что, когда, с каких значений на какие.
 type AuditRepo struct {
 	pool *pgxpool.Pool
 }
@@ -17,8 +16,8 @@ func NewAuditRepo(pool *pgxpool.Pool) *AuditRepo { return &AuditRepo{pool: pool}
 
 type AuditEntry struct {
 	ActorUserID *uuid.UUID
-	Action      string // create | update | delete | apply | dismiss
-	Entity      string // work_profile | exception | integration | user | recommendation
+	Action      string
+	Entity      string
 	EntityID    *uuid.UUID
 	Before      any
 	After       any
@@ -42,8 +41,8 @@ func (r *AuditRepo) Log(ctx context.Context, e AuditEntry) error {
 }
 
 type AuditListFilter struct {
-	Entity   string     // optional
-	EntityID *uuid.UUID // optional
+	Entity   string
+	EntityID *uuid.UUID
 	Limit    int
 }
 
@@ -80,9 +79,9 @@ func (r *AuditRepo) List(ctx context.Context, f AuditListFilter) ([]AuditRecord,
 	var out []AuditRecord
 	for rows.Next() {
 		var (
-			rec        AuditRecord
-			beforeStr  string
-			afterStr   string
+			rec       AuditRecord
+			beforeStr string
+			afterStr  string
 		)
 		if err := rows.Scan(
 			&rec.ID, &rec.ActorUserID, &rec.Action, &rec.Entity, &rec.EntityID,

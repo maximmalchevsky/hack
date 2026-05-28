@@ -14,7 +14,6 @@ import (
 	"worktimesync/internal/repository"
 )
 
-// AdminService — операции уровня администратора.
 type AdminService struct {
 	pool *pgxpool.Pool
 }
@@ -23,7 +22,6 @@ func NewAdminService(pool *pgxpool.Pool) *AdminService {
 	return &AdminService{pool: pool}
 }
 
-// AdminUserRow — публичная форма пользователя в админке.
 type AdminUserRow struct {
 	ID        uuid.UUID `json:"id"`
 	Email     string    `json:"email"`
@@ -55,12 +53,8 @@ func (s *AdminService) ListUsers(ctx context.Context) ([]AdminUserRow, error) {
 	return out, rows.Err()
 }
 
-// ErrUserNotFound — тип ошибки UpdateEmail для пользователя, которого нет.
-// ErrInvalidEmail и ErrEmailTaken — переиспользуются из auth.go.
 var ErrUserNotFound = errors.New("admin: user not found")
 
-// UpdateEmail — админская смена почты любого пользователя. Email
-// нормализуется (lowercase + trim). Логин пользователя становится новым.
 func (s *AdminService) UpdateEmail(ctx context.Context, userID uuid.UUID, newEmail string) error {
 	email := strings.ToLower(strings.TrimSpace(newEmail))
 	if !looksLikeEmailService(email) {
@@ -79,8 +73,6 @@ func (s *AdminService) UpdateEmail(ctx context.Context, userID uuid.UUID, newEma
 	return nil
 }
 
-// looksLikeEmailService — дублирует looksLikeEmail из handler/me.go.
-// Просто чтобы не плодить зависимость service → handler.
 func looksLikeEmailService(s string) bool {
 	if len(s) < 3 || len(s) > 254 {
 		return false
@@ -101,7 +93,6 @@ func looksLikeEmailService(s string) bool {
 	return true
 }
 
-// UpdateRole — сменить роль пользователя.
 func (s *AdminService) UpdateRole(ctx context.Context, userID uuid.UUID, newRole domain.Role) error {
 	if !newRole.Valid() {
 		return errors.New("invalid role")
@@ -118,18 +109,17 @@ func (s *AdminService) UpdateRole(ctx context.Context, userID uuid.UUID, newRole
 	return nil
 }
 
-// AdminIntegrationRow — публичная форма интеграции для админки.
 type AdminIntegrationRow struct {
-	ID            uuid.UUID  `json:"id"`
-	EmployeeID    uuid.UUID  `json:"employee_id"`
-	EmployeeName  string     `json:"employee_name"`
-	Provider      string     `json:"provider"`
-	Status        string     `json:"status"`
-	AccountLabel  string     `json:"account_label,omitempty"`
-	AccountEmail  string     `json:"account_email,omitempty"`
-	LastSyncAt    *time.Time `json:"last_sync_at,omitempty"`
-	LastError     string     `json:"last_error,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
+	ID           uuid.UUID  `json:"id"`
+	EmployeeID   uuid.UUID  `json:"employee_id"`
+	EmployeeName string     `json:"employee_name"`
+	Provider     string     `json:"provider"`
+	Status       string     `json:"status"`
+	AccountLabel string     `json:"account_label,omitempty"`
+	AccountEmail string     `json:"account_email,omitempty"`
+	LastSyncAt   *time.Time `json:"last_sync_at,omitempty"`
+	LastError    string     `json:"last_error,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 func (s *AdminService) ListIntegrations(ctx context.Context) ([]AdminIntegrationRow, error) {
@@ -166,15 +156,14 @@ func (s *AdminService) ListIntegrations(ctx context.Context) ([]AdminIntegration
 	return out, rows.Err()
 }
 
-// AnalyticsWeights — текущие веса риска.
 type AnalyticsWeights struct {
-	W1               float64   `json:"w1"`
-	W2               float64   `json:"w2"`
-	W3               float64   `json:"w3"`
-	W4               float64   `json:"w4"`
-	W5               float64   `json:"w5"`
-	FreshnessDDays   int       `json:"freshness_d_days"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	W1             float64   `json:"w1"`
+	W2             float64   `json:"w2"`
+	W3             float64   `json:"w3"`
+	W4             float64   `json:"w4"`
+	W5             float64   `json:"w5"`
+	FreshnessDDays int       `json:"freshness_d_days"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 func (s *AdminService) GetWeights(ctx context.Context) (*AnalyticsWeights, error) {
@@ -206,7 +195,6 @@ func (s *AdminService) UpdateWeights(ctx context.Context, w AnalyticsWeights) er
 	return err
 }
 
-// SystemHealth — общая сводка для админки.
 type SystemHealth struct {
 	UsersCount         int `json:"users_count"`
 	EmployeesCount     int `json:"employees_count"`

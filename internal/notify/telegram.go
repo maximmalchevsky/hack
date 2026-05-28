@@ -11,12 +11,6 @@ import (
 	"time"
 )
 
-// TelegramTransport — отправка через Bot API.
-//
-// Не использует внешних либ — простой HTTP POST на api.telegram.org/bot<token>/sendMessage.
-// Поддерживает parse_mode=HTML для базового форматирования.
-//
-// Привязка chat_id к user — отдельная задача (см. TelegramBot.Polling).
 type TelegramTransport struct {
 	token    string
 	baseURL  string

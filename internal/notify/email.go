@@ -11,12 +11,6 @@ import (
 	"strings"
 )
 
-// EmailTransport — SMTP-канал. Использует стандартный net/smtp.
-//
-// Если STARTTLS=true, сначала отправляется EHLO, потом STARTTLS, потом AUTH.
-// Для Yandex/Mail.ru/Gmail с приложенным app-password — нормально работает.
-//
-// При пустом Host транспорт считается выключенным.
 type EmailTransport struct {
 	host     string
 	port     int
@@ -24,7 +18,7 @@ type EmailTransport struct {
 	pass     string
 	from     string
 	startTLS bool
-	baseURL  string // для собирания полной ссылки в письме
+	baseURL  string
 	disabled bool
 }
 
@@ -42,8 +36,6 @@ func NewEmailTransport(host string, port int, user, pass, from, baseURL string, 
 func (t *EmailTransport) Name() string  { return "email" }
 func (t *EmailTransport) Enabled() bool { return !t.disabled }
 
-// From — возвращает сырой from-адрес транспорта (вместе с display-name если есть).
-// Используется как fallback для ORGANIZER в .ics когда IMIP_REPLY_TO не задан.
 func (t *EmailTransport) From() string { return t.from }
 
 func (t *EmailTransport) Send(ctx context.Context, msg Message) error {
@@ -66,9 +58,6 @@ func (t *EmailTransport) Send(ctx context.Context, msg Message) error {
 		"Subject":                   mimeEncode(subj),
 		"MIME-Version":              "1.0",
 		"Content-Type":              `text/html; charset="utf-8"`,
-		// 8bit обязателен — без него получатель видит mojibake вроде
-		// «ÐÑÑÑÐµÑÐ°» вместо «Встреча». Все наши SMTP (Yandex/Gmail/Mail.ru)
-		// поддерживают 8BITMIME extension.
 		"Content-Transfer-Encoding": "8bit",
 	}
 	var sb strings.Builder
@@ -81,7 +70,6 @@ func (t *EmailTransport) Send(ctx context.Context, msg Message) error {
 	sb.WriteString("\r\n")
 	sb.WriteString(body)
 
-	// DialWithTimeout не во всех версиях net/smtp — используем DialContext через Dialer.
 	c, err := smtp.Dial(addr)
 	if err != nil {
 		return fmt.Errorf("smtp dial: %w", err)
@@ -125,7 +113,6 @@ func (t *EmailTransport) Send(ctx context.Context, msg Message) error {
 	return c.Quit()
 }
 
-// buildEmailBody — минималистичный HTML с заголовком/телом и кнопкой.
 func buildEmailBody(baseURL string, msg Message) string {
 	link := msg.Link
 	if link != "" && baseURL != "" && !strings.HasPrefix(link, "http") {
@@ -151,7 +138,6 @@ func htmlEscape(s string) string {
 	return r.Replace(s)
 }
 
-// senderAddress — извлекает email из «Имя <email>».
 func senderAddress(from string) string {
 	if i := strings.LastIndex(from, "<"); i >= 0 {
 		if j := strings.LastIndex(from, ">"); j > i {
@@ -161,14 +147,6 @@ func senderAddress(from string) string {
 	return from
 }
 
-// SendCalendarInvite — отправляет iMIP-инвайт: multipart/mixed письмо с
-// text/plain (читаемое описание) + text/calendar; method=REQUEST (тот самый
-// .ics, по которому Gmail/Apple/Outlook покажут кнопки Accept/Decline).
-//
-// replyTo — отдельный почтовый ящик, на который Gmail отправит REPLY-письмо
-// при accept. Этот же адрес стоит в ORGANIZER внутри .ics (см. imip.BuildInvitation).
-// fromDisplayName — отображаемое имя инициатора («Игорь Климов»),
-// чтобы получатель видел «Workie от Игорь Климов <invites@...>».
 func (t *EmailTransport) SendCalendarInvite(
 	ctx context.Context,
 	to, subject, plain, ics, replyTo, fromDisplayName string,
@@ -185,9 +163,6 @@ func (t *EmailTransport) SendCalendarInvite(
 
 	from := t.from
 	if fromDisplayName != "" && replyTo != "" {
-		// «Workie от Игорь Климов <invites@my-domain.ru>» — корректный RFC 5322
-		// формат, при котором Reply-To не нужен (но мы всё равно ставим — Gmail
-		// иногда игнорирует адрес в From и шлёт ответ на envelope-sender).
 		from = fmt.Sprintf("%s <%s>",
 			mimeEncode("Workie от "+fromDisplayName), replyTo)
 	}
@@ -195,7 +170,6 @@ func (t *EmailTransport) SendCalendarInvite(
 	addr := fmt.Sprintf("%s:%d", t.host, t.port)
 	boundary := "wkmime_" + randomHex(8)
 
-	// Заголовки + multipart-тело.
 	headers := []string{
 		"From: " + from,
 		"To: " + to,
@@ -214,16 +188,12 @@ func (t *EmailTransport) SendCalendarInvite(
 	}
 	sb.WriteString("\r\n")
 
-	// Часть 1 — text/plain (читаемое описание).
 	sb.WriteString("--" + boundary + "\r\n")
 	sb.WriteString(`Content-Type: text/plain; charset="utf-8"` + "\r\n")
 	sb.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
 	sb.WriteString(plain)
 	sb.WriteString("\r\n\r\n")
 
-	// Часть 2 — text/calendar; method=REQUEST (.ics).
-	// method=REQUEST в Content-Type — критично: без него Gmail не покажет
-	// кнопки RSVP. Также добавляем как attachment чтобы Outlook не запутался.
 	sb.WriteString("--" + boundary + "\r\n")
 	sb.WriteString(`Content-Type: text/calendar; charset="utf-8"; method=REQUEST; name="invite.ics"` + "\r\n")
 	sb.WriteString("Content-Transfer-Encoding: 8bit\r\n")
@@ -233,7 +203,6 @@ func (t *EmailTransport) SendCalendarInvite(
 
 	sb.WriteString("--" + boundary + "--\r\n")
 
-	// SMTP-flow — тот же что в Send().
 	c, err := smtp.Dial(addr)
 	if err != nil {
 		return fmt.Errorf("smtp dial: %w", err)
@@ -282,10 +251,7 @@ func randomHex(n int) string {
 	return hex.EncodeToString(b)
 }
 
-// mimeEncode — UTF-8 subject (RFC 2047 B-encoding).
 func mimeEncode(s string) string {
-	// Простая реализация: =?UTF-8?B?...?=
-	// net/mail.Address у нас нет, делаем руками.
 	const b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 	bs := []byte(s)
 	var enc strings.Builder

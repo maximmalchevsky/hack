@@ -6,7 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// User — учётная запись.
 type User struct {
 	ID           uuid.UUID
 	Email        string
@@ -20,7 +19,6 @@ type User struct {
 	UpdatedAt    time.Time
 }
 
-// WorkFormat — формат работы.
 type WorkFormat string
 
 const (
@@ -37,7 +35,6 @@ func (w WorkFormat) Valid() bool {
 	return false
 }
 
-// Employee — кадровый профиль (один user — один employee).
 type Employee struct {
 	ID                  uuid.UUID
 	UserID              uuid.UUID

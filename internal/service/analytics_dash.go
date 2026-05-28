@@ -1,6 +1,3 @@
-// Package service — AnalyticsDashService собирает агрегированные данные для
-// страницы /analytics. Все числа считаются на лету из текущей БД, без кэша,
-// т.к. на хакатоне объёмы маленькие и реалтайм важнее.
 package service
 
 import (
@@ -36,8 +33,6 @@ func NewAnalyticsDashService(
 	}
 }
 
-// --- Overview KPI ---
-
 type OverviewKPI struct {
 	Employees     int     `json:"employees"`
 	AvgA          float64 `json:"avg_a"`
@@ -49,7 +44,6 @@ type OverviewKPI struct {
 	OnVacation    int     `json:"on_vacation_now"`
 }
 
-// Overview — KPI-карточки. Метрики A/L/R считаются как среднее по всем сотрудникам.
 func (s *AnalyticsDashService) Overview(ctx context.Context) (*OverviewKPI, error) {
 	out := &OverviewKPI{}
 
@@ -57,7 +51,6 @@ func (s *AnalyticsDashService) Overview(ctx context.Context) (*OverviewKPI, erro
 		return nil, err
 	}
 
-	// Диагностика → группы.
 	groups, err := s.diagnostics.Build(ctx)
 	if err != nil {
 		return nil, err
@@ -65,7 +58,6 @@ func (s *AnalyticsDashService) Overview(ctx context.Context) (*OverviewKPI, erro
 	out.StaleProfiles = len(groups.Stale)
 	out.NeedsConfirm = len(groups.NeedsConfirm)
 
-	// Среднее A по всем (через freshness-поле в groups).
 	var sumA float64
 	var cntA int
 	for _, g := range [][]DiagnosticsRow{groups.Fresh, groups.NeedsConfirm, groups.Stale} {
@@ -78,7 +70,6 @@ func (s *AnalyticsDashService) Overview(ctx context.Context) (*OverviewKPI, erro
 		out.AvgA = sumA / float64(cntA)
 	}
 
-	// Конфликты за последние 7 дней.
 	from := time.Now().UTC().AddDate(0, 0, -7)
 	to := time.Now().UTC().AddDate(0, 0, 1)
 	cs, err := s.conflicts.ListAll(ctx, from, to, 1000)
@@ -86,13 +77,11 @@ func (s *AnalyticsDashService) Overview(ctx context.Context) (*OverviewKPI, erro
 		out.Conflicts7d = len(cs)
 	}
 
-	// На отпуске/командировке/больничном прямо сейчас.
 	_ = s.pool.QueryRow(ctx, `
 		SELECT count(DISTINCT employee_id) FROM time_exceptions
 		WHERE start_at <= now() AND end_at >= now()
 	`).Scan(&out.OnVacation)
 
-	// AvgR/AvgL — берём из metrics_snapshots если есть, иначе nope.
 	_ = s.pool.QueryRow(ctx, `
 		SELECT COALESCE(AVG(risk_r), 0), COALESCE(AVG(load_l), 0)
 		FROM (
@@ -105,8 +94,6 @@ func (s *AnalyticsDashService) Overview(ctx context.Context) (*OverviewKPI, erro
 	return out, nil
 }
 
-// --- Risk by team (bar) ---
-
 type TeamRisk struct {
 	TeamID   string  `json:"team_id"`
 	TeamName string  `json:"team_name"`
@@ -115,7 +102,6 @@ type TeamRisk struct {
 	Members  int     `json:"members"`
 }
 
-// RiskByTeam — для каждой команды считаем средний R и A её участников.
 func (s *AnalyticsDashService) RiskByTeam(ctx context.Context) ([]TeamRisk, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT t.id, t.name,
@@ -149,13 +135,6 @@ func (s *AnalyticsDashService) RiskByTeam(ctx context.Context) ([]TeamRisk, erro
 	return out, rows.Err()
 }
 
-// --- Leaderboard команд по актуальности данных (кейс №3, §13) ---
-
-// TeamScore — сводный показатель «здоровья» команды.
-// Score = avg_a − 0.5·avg_r. Чем выше, тем лучше:
-//   - avg_a близок к 1 — графики обновлены недавно.
-//   - avg_r близок к 0 — низкий интегральный риск.
-// Чистый показатель в [-0.5; 1.0].
 type TeamScore struct {
 	TeamID   string  `json:"team_id"`
 	TeamName string  `json:"team_name"`
@@ -163,10 +142,9 @@ type TeamScore struct {
 	AvgA     float64 `json:"avg_a"`
 	AvgR     float64 `json:"avg_r"`
 	Score    float64 `json:"score"`
-	Rank     int     `json:"rank"` // 1 = лучший
+	Rank     int     `json:"rank"`
 }
 
-// Leaderboard — отсортированный по score DESC список команд.
 func (s *AnalyticsDashService) Leaderboard(ctx context.Context) ([]TeamScore, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT t.id, t.name,
@@ -201,7 +179,6 @@ func (s *AnalyticsDashService) Leaderboard(ctx context.Context) ([]TeamScore, er
 		return nil, err
 	}
 
-	// Сортировка по score DESC + ранг.
 	for i := 1; i < len(out); i++ {
 		for j := i; j > 0 && out[j].Score > out[j-1].Score; j-- {
 			out[j-1], out[j] = out[j], out[j-1]
@@ -213,14 +190,11 @@ func (s *AnalyticsDashService) Leaderboard(ctx context.Context) ([]TeamScore, er
 	return out, nil
 }
 
-// --- Conflicts by weekday (bar) ---
-
 type WeekdayConflicts struct {
-	Weekday int `json:"weekday"` // 1=Mon..7=Sun
+	Weekday int `json:"weekday"`
 	Count   int `json:"count"`
 }
 
-// ConflictsByWeekday — за последние 30 дней. Возвращает 7 точек: ПН..ВС.
 func (s *AnalyticsDashService) ConflictsByWeekday(ctx context.Context) ([]WeekdayConflicts, error) {
 	from := time.Now().UTC().AddDate(0, 0, -30)
 	to := time.Now().UTC().AddDate(0, 0, 1)
@@ -231,7 +205,6 @@ func (s *AnalyticsDashService) ConflictsByWeekday(ctx context.Context) ([]Weekda
 
 	counts := make(map[int]int)
 	for _, c := range cs {
-		// Postgres: 1=Mon..7=Sun (ISO). Go time: 0=Sun..6=Sat.
 		w := int(c.StartAt.Weekday())
 		if w == 0 {
 			w = 7
@@ -246,18 +219,11 @@ func (s *AnalyticsDashService) ConflictsByWeekday(ctx context.Context) ([]Weekda
 	return out, nil
 }
 
-// --- Freshness trend ---
-
 type WeekFreshness struct {
-	WeekStart string  `json:"week_start"` // YYYY-MM-DD
+	WeekStart string  `json:"week_start"`
 	AvgA      float64 `json:"avg_a"`
 }
 
-// FreshnessTrend — динамика средней A за 8 последних недель.
-// На каждую неделю берём «состояние на конец недели»: для каждого сотрудника
-// last_profile_update_at и считаем A = 1 - d/D, где d — дни от end_of_week до
-// last_profile_update_at, отрицательные обнуляем (профиль обновлён после
-// этой недели — на момент конца недели он ещё не был свежим).
 func (s *AnalyticsDashService) FreshnessTrend(ctx context.Context) ([]WeekFreshness, error) {
 	const weeks = 8
 	now := time.Now().UTC()
@@ -290,7 +256,6 @@ func (s *AnalyticsDashService) FreshnessTrend(ctx context.Context) ([]WeekFreshn
 		var cnt int
 		for _, u := range updates {
 			if u.After(weekEnd) {
-				// На момент weekEnd обновления ещё не было — пропускаем.
 				continue
 			}
 			days := int(weekEnd.Sub(u).Hours() / 24)
@@ -313,10 +278,8 @@ func (s *AnalyticsDashService) FreshnessTrend(ctx context.Context) ([]WeekFreshn
 	return out, nil
 }
 
-// --- Groups distribution (donut) ---
-
 type GroupSlice struct {
-	Group string `json:"group"` // fresh|needs_confirm|stale|unknown
+	Group string `json:"group"`
 	Count int    `json:"count"`
 }
 

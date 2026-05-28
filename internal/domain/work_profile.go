@@ -6,14 +6,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// DayHours — рабочий интервал для одного дня.
 type DayHours struct {
-	Start string `json:"start"` // "09:00"
-	End   string `json:"end"`   // "18:00"
+	Start string `json:"start"`
+	End   string `json:"end"`
 }
 
-// DaysOfWeek — карта дней недели на интервалы.
-// nil = выходной/не задан.
 type DaysOfWeek struct {
 	Mon *DayHours `json:"mon,omitempty"`
 	Tue *DayHours `json:"tue,omitempty"`
@@ -24,8 +21,6 @@ type DaysOfWeek struct {
 	Sun *DayHours `json:"sun,omitempty"`
 }
 
-// WorkProfile — версионированный рабочий профиль сотрудника.
-// Активная запись — valid_to == nil. Старые — историческая выборка.
 type WorkProfile struct {
 	ID         uuid.UUID  `json:"id"`
 	EmployeeID uuid.UUID  `json:"employee_id"`
@@ -38,10 +33,8 @@ type WorkProfile struct {
 	CreatedAt  time.Time  `json:"created_at"`
 }
 
-// IsActive — true для активной (текущей) версии.
 func (w *WorkProfile) IsActive() bool { return w.ValidTo == nil }
 
-// ExceptionKind — тип временного исключения.
 type ExceptionKind string
 
 const (
@@ -61,7 +54,6 @@ func (k ExceptionKind) Valid() bool {
 	return false
 }
 
-// TimeException — отпуск, больничный, командировка и т.п.
 type TimeException struct {
 	ID         uuid.UUID     `json:"id"`
 	EmployeeID uuid.UUID     `json:"employee_id"`

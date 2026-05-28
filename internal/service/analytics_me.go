@@ -1,5 +1,3 @@
-// Package service — AnalyticsMeService отдаёт личную аналитику для таба «Моя»
-// на странице /analytics. Считает по одному конкретному сотруднику.
 package service
 
 import (
@@ -22,19 +20,16 @@ func NewAnalyticsMeService(pool *pgxpool.Pool, weights analytics.Weights, confli
 	return &AnalyticsMeService{pool: pool, weights: weights, conflicts: conflicts}
 }
 
-// MeOverview — KPI для личной аналитики сотрудника.
 type MeOverview struct {
 	AvgA            float64 `json:"avg_a"`
 	AvgR            float64 `json:"avg_r"`
 	AvgL            float64 `json:"avg_l"`
-	DaysSinceUpdate int     `json:"days_since_update"` // -1 если профиль ни разу не обновлялся
+	DaysSinceUpdate int     `json:"days_since_update"`
 	Events7d        int     `json:"events_7d"`
 	Hours7d         float64 `json:"hours_7d"`
 	Conflicts30d    int     `json:"conflicts_30d"`
 }
 
-// Overview — компактный KPI набор для одного сотрудника.
-// empID — id записи в employees.
 func (s *AnalyticsMeService) Overview(ctx context.Context, empID uuid.UUID) (*MeOverview, error) {
 	out := &MeOverview{DaysSinceUpdate: -1}
 	D := s.weights.FreshnessDDays
@@ -42,7 +37,6 @@ func (s *AnalyticsMeService) Overview(ctx context.Context, empID uuid.UUID) (*Me
 		D = 90
 	}
 
-	// last_profile_update_at + risk_r + load_l из последнего snapshot.
 	var lastUpdate *time.Time
 	var riskR, loadL float64
 	err := s.pool.QueryRow(ctx, `
@@ -73,7 +67,6 @@ func (s *AnalyticsMeService) Overview(ctx context.Context, empID uuid.UUID) (*Me
 		out.AvgA = a
 	}
 
-	// События и часы за 7 дней.
 	_ = s.pool.QueryRow(ctx, `
 		SELECT count(*),
 		       COALESCE(SUM(EXTRACT(EPOCH FROM (end_at - start_at))) / 3600, 0)
@@ -85,7 +78,6 @@ func (s *AnalyticsMeService) Overview(ctx context.Context, empID uuid.UUID) (*Me
 		  AND start_at < now()
 	`, empID).Scan(&out.Events7d, &out.Hours7d)
 
-	// Конфликты за 30 дней.
 	from := time.Now().UTC().AddDate(0, 0, -30)
 	to := time.Now().UTC().AddDate(0, 0, 1)
 	if cs, err := s.conflicts.ListByEmployee(ctx, empID, from, to); err == nil {
@@ -95,22 +87,12 @@ func (s *AnalyticsMeService) Overview(ctx context.Context, empID uuid.UUID) (*Me
 	return out, nil
 }
 
-// MeTrendPoint — точка тренда личной аналитики.
 type MeTrendPoint struct {
-	WeekStart string  `json:"week_start"` // YYYY-MM-DD (понедельник в UTC)
+	WeekStart string  `json:"week_start"`
 	AvgA      float64 `json:"avg_a"`
 	AvgL      float64 `json:"avg_l"`
 }
 
-// Trend — 8 недель: динамика A (из last_profile_update_at) и L (busy/work).
-//
-// Для A используем формулу A = 1 − d/D, где d — дней от конца недели до
-// last_profile_update_at. Если на момент конца недели обновление ещё не
-// случилось — A=0 (для этой недели сотрудник был «несвежим»).
-//
-// Для L берём фактические занятые минуты этой недели и делим на сумму рабочих
-// минут из активного work_profile. Historic-профиль не учитываем — нам важна
-// динамика, не идеальная точность.
 func (s *AnalyticsMeService) Trend(ctx context.Context, empID uuid.UUID) ([]MeTrendPoint, error) {
 	const weeks = 8
 	D := s.weights.FreshnessDDays
@@ -118,7 +100,6 @@ func (s *AnalyticsMeService) Trend(ctx context.Context, empID uuid.UUID) ([]MeTr
 		D = 90
 	}
 
-	// last_profile_update_at + days_of_week активного профиля.
 	var lastUpdate *time.Time
 	var daysJSON []byte
 	_ = s.pool.QueryRow(ctx, `
@@ -146,7 +127,6 @@ func (s *AnalyticsMeService) Trend(ctx context.Context, empID uuid.UUID) ([]MeTr
 		monday := time.Date(end.Year(), end.Month(), end.Day()-(wd-1), 0, 0, 0, 0, time.UTC)
 		nextMonday := monday.AddDate(0, 0, 7)
 
-		// L: занятые минуты / weekWorkMin.
 		var busyMin float64
 		_ = s.pool.QueryRow(ctx, `
 			SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (end_at - start_at))) / 60, 0)
@@ -161,11 +141,10 @@ func (s *AnalyticsMeService) Trend(ctx context.Context, empID uuid.UUID) ([]MeTr
 		if weekWorkMin > 0 {
 			L = busyMin / float64(weekWorkMin)
 			if L > 1.5 {
-				L = 1.5 // clamp перегруза, чтобы не выходить за разумное на графике
+				L = 1.5
 			}
 		}
 
-		// A на конец недели.
 		weekEnd := nextMonday.Add(-time.Second)
 		var A float64
 		if lastUpdate != nil && !lastUpdate.After(weekEnd) {
@@ -185,7 +164,6 @@ func (s *AnalyticsMeService) Trend(ctx context.Context, empID uuid.UUID) ([]MeTr
 	return out, nil
 }
 
-// ConflictsByWeekday — конфликты этого сотрудника по дням недели за 30 дней.
 func (s *AnalyticsMeService) ConflictsByWeekday(ctx context.Context, empID uuid.UUID) ([]WeekdayConflicts, error) {
 	from := time.Now().UTC().AddDate(0, 0, -30)
 	to := time.Now().UTC().AddDate(0, 0, 1)
@@ -208,13 +186,11 @@ func (s *AnalyticsMeService) ConflictsByWeekday(ctx context.Context, empID uuid.
 	return out, nil
 }
 
-// MeHoursWeek — суммарные часы встреч одной недели.
 type MeHoursWeek struct {
 	WeekStart string  `json:"week_start"`
 	Hours     float64 `json:"hours"`
 }
 
-// HoursByWeek — часы встреч этого сотрудника по неделям за 8 недель.
 func (s *AnalyticsMeService) HoursByWeek(ctx context.Context, empID uuid.UUID) ([]MeHoursWeek, error) {
 	const weeks = 8
 	now := time.Now().UTC()

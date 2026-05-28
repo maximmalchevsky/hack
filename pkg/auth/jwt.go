@@ -9,7 +9,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// TokenType — назначение токена. Access короткоживущий, Refresh длинный.
 type TokenType string
 
 const (
@@ -17,7 +16,6 @@ const (
 	TokenRefresh TokenType = "refresh"
 )
 
-// Claims — JWT-полезная нагрузка.
 type Claims struct {
 	UserID     uuid.UUID `json:"uid"`
 	Role       string    `json:"role"`
@@ -26,7 +24,6 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// Manager — генерация и валидация JWT.
 type Manager struct {
 	secret     []byte
 	accessTTL  time.Duration
@@ -43,7 +40,6 @@ func NewManager(secret string, accessTTL, refreshTTL time.Duration) *Manager {
 	}
 }
 
-// Issue — создаёт access + refresh токены для пользователя.
 func (m *Manager) Issue(userID, employeeID uuid.UUID, role string) (access, refresh string, err error) {
 	now := time.Now()
 
@@ -85,7 +81,6 @@ func (m *Manager) sign(c Claims) (string, error) {
 	return t.SignedString(m.secret)
 }
 
-// Parse — валидирует и возвращает claims, либо ошибку.
 func (m *Manager) Parse(tokenString string) (*Claims, error) {
 	parsed, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -103,7 +98,6 @@ func (m *Manager) Parse(tokenString string) (*Claims, error) {
 	return claims, nil
 }
 
-// ParseAccess — то же что Parse, но проверяет что это именно access-токен.
 func (m *Manager) ParseAccess(tokenString string) (*Claims, error) {
 	c, err := m.Parse(tokenString)
 	if err != nil {
@@ -115,7 +109,6 @@ func (m *Manager) ParseAccess(tokenString string) (*Claims, error) {
 	return c, nil
 }
 
-// ParseRefresh — то же, но для refresh.
 func (m *Manager) ParseRefresh(tokenString string) (*Claims, error) {
 	c, err := m.Parse(tokenString)
 	if err != nil {

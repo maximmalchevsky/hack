@@ -1,4 +1,3 @@
-// Package service — бизнес-логика поверх репозиториев.
 package service
 
 import (
@@ -16,7 +15,6 @@ import (
 	"worktimesync/pkg/auth"
 )
 
-// Ошибки сервиса аутентификации.
 var (
 	ErrInvalidCredentials = errors.New("auth: invalid credentials")
 	ErrEmailTaken         = errors.New("auth: email already taken")
@@ -25,12 +23,11 @@ var (
 	ErrInvalidEmail       = errors.New("auth: invalid email")
 )
 
-// AuthService — сервис аутентификации.
 type AuthService struct {
-	pool     *pgxpool.Pool
-	users    *repository.UserRepo
-	emps     *repository.EmployeeRepo
-	jwt      *auth.Manager
+	pool  *pgxpool.Pool
+	users *repository.UserRepo
+	emps  *repository.EmployeeRepo
+	jwt   *auth.Manager
 }
 
 func NewAuthService(pool *pgxpool.Pool, jwt *auth.Manager) *AuthService {
@@ -42,7 +39,6 @@ func NewAuthService(pool *pgxpool.Pool, jwt *auth.Manager) *AuthService {
 	}
 }
 
-// RegisterInput — параметры регистрации.
 type RegisterInput struct {
 	Email    string
 	Password string
@@ -51,23 +47,17 @@ type RegisterInput struct {
 	Timezone string
 }
 
-// TokenPair — пара access + refresh.
 type TokenPair struct {
 	Access  string
 	Refresh string
 }
 
-// RegisterResult — результат регистрации: токены + созданный пользователь.
 type RegisterResult struct {
 	Tokens   TokenPair
 	User     domain.User
 	Employee domain.Employee
 }
 
-// Register — создаёт user + employee одной транзакцией и сразу выдаёт токены.
-//
-// По умолчанию роль — employee. Admin/Manager/HR/PM/Analyst создаются
-// только через админ-эндпоинт (см. /api/v1/admin/users) или скриптом seed.
 func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*RegisterResult, error) {
 	in.Email = strings.TrimSpace(strings.ToLower(in.Email))
 	if !looksLikeEmail(in.Email) {
@@ -88,16 +78,12 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*Register
 		return nil, fmt.Errorf("hash password: %w", err)
 	}
 
-	// Транзакция: создаём user + employee атомарно.
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
 
-	// Поскольку CreateUserInput не зависит от tx, для простоты используем pool —
-	// в случае ошибки на employee откатывать не получится. Сделаем чище:
-	// явно вставляем через tx и сканируем.
 	row := tx.QueryRow(ctx, `
 		INSERT INTO users (email, password_hash, role, full_name, timezone)
 		VALUES ($1, $2, $3, $4, $5)
@@ -142,7 +128,6 @@ func (s *AuthService) Register(ctx context.Context, in RegisterInput) (*Register
 	}, nil
 }
 
-// Login — проверяет email+password и выдаёт токены.
 func (s *AuthService) Login(ctx context.Context, email, password string) (*RegisterResult, error) {
 	email = strings.TrimSpace(strings.ToLower(email))
 	if !looksLikeEmail(email) || password == "" {
@@ -185,7 +170,6 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (*Regis
 	return out, nil
 }
 
-// Refresh — обменивает валидный refresh-токен на новую пару.
 func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenPair, error) {
 	claims, err := s.jwt.ParseRefresh(refreshToken)
 	if err != nil {
@@ -216,8 +200,6 @@ func (s *AuthService) Refresh(ctx context.Context, refreshToken string) (*TokenP
 	return &TokenPair{Access: access, Refresh: refresh}, nil
 }
 
-// --- helpers ---
-
 func looksLikeEmail(s string) bool {
 	at := strings.IndexByte(s, '@')
 	return at > 0 && at < len(s)-3 && strings.Contains(s[at+1:], ".")
@@ -231,17 +213,12 @@ func defaultTZ(tz string) string {
 }
 
 func isUniqueViolation(err error) bool {
-	// чтобы не тянуть pgconn.PgError здесь — проверяем по строке;
-	// репозиторий уже даёт типизированную ErrEmailTaken на своём уровне,
-	// но мы выполняем INSERT напрямую через tx.
 	if err == nil {
 		return false
 	}
 	return strings.Contains(err.Error(), "duplicate key value") ||
 		strings.Contains(err.Error(), "23505")
 }
-
-// --- inline row scanners (мини-копия из repository, чтобы не плодить экспорт) ---
 
 type rowScanner interface {
 	Scan(dest ...any) error

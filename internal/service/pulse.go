@@ -10,9 +10,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// PulseService — короткий опрос самочувствия сотрудника.
-// Идея: раз в ~14 дней спрашиваем «как ты сейчас» по шкале 1..5,
-// собираем динамику и показываем менеджеру.
 type PulseService struct {
 	pool *pgxpool.Pool
 }
@@ -21,7 +18,6 @@ func NewPulseService(pool *pgxpool.Pool) *PulseService {
 	return &PulseService{pool: pool}
 }
 
-// PulseEntry — один ответ сотрудника.
 type PulseEntry struct {
 	ID        uuid.UUID `json:"id"`
 	Score     int       `json:"score"`
@@ -29,27 +25,22 @@ type PulseEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// MeState — состояние pulse для сотрудника (для виджета на дашборде).
 type MeState struct {
-	ShouldAsk      bool        `json:"should_ask"`       // надо ли сейчас спросить (≥ 14 дней с последнего, либо никогда)
-	DaysSince      *int        `json:"days_since,omitempty"`
-	Last           *PulseEntry `json:"last,omitempty"`
-	History        []PulseEntry `json:"history"`         // последние ~6 ответов для мини-графика
+	ShouldAsk bool         `json:"should_ask"`
+	DaysSince *int         `json:"days_since,omitempty"`
+	Last      *PulseEntry  `json:"last,omitempty"`
+	History   []PulseEntry `json:"history"`
 }
 
-// PulseInterval — раз в сколько дней показываем опрос.
 const PulseInterval = 14
 
 var ErrInvalidScore = errors.New("pulse: score must be 1..5")
 
-// SubmitFromBot — обёртка для notify.Bot (он не хочет тащить service-пакет
-// и тип PulseEntry, ему важна только ошибка).
 func (s *PulseService) SubmitFromBot(ctx context.Context, empID uuid.UUID, score int) error {
 	_, err := s.Submit(ctx, empID, score, "")
 	return err
 }
 
-// Submit — записывает ответ сотрудника.
 func (s *PulseService) Submit(ctx context.Context, empID uuid.UUID, score int, comment string) (*PulseEntry, error) {
 	if score < 1 || score > 5 {
 		return nil, ErrInvalidScore
@@ -70,11 +61,9 @@ func (s *PulseService) Submit(ctx context.Context, empID uuid.UUID, score int, c
 	return &e, nil
 }
 
-// Me — состояние pulse для текущего сотрудника.
 func (s *PulseService) Me(ctx context.Context, empID uuid.UUID) (MeState, error) {
 	out := MeState{History: []PulseEntry{}}
 
-	// История — последние 6.
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, score, COALESCE(comment, ''), created_at
 		FROM pulse_responses
@@ -99,7 +88,6 @@ func (s *PulseService) Me(ctx context.Context, empID uuid.UUID) (MeState, error)
 	}
 
 	if len(out.History) == 0 {
-		// Никогда не отвечал — точно надо спросить.
 		out.ShouldAsk = true
 		return out, nil
 	}
@@ -112,27 +100,24 @@ func (s *PulseService) Me(ctx context.Context, empID uuid.UUID) (MeState, error)
 	return out, nil
 }
 
-// TeamMember — pulse одного сотрудника глазами менеджера.
 type TeamMember struct {
-	EmployeeID  uuid.UUID  `json:"employee_id"`
-	FullName    string     `json:"full_name"`
-	Department  string     `json:"department,omitempty"`
-	LastScore   *int       `json:"last_score,omitempty"`   // nil — ещё не отвечал
-	LastAt      *time.Time `json:"last_at,omitempty"`
-	DaysSince   *int       `json:"days_since,omitempty"`
-	Comment     string     `json:"comment,omitempty"`
-	Trend       []int      `json:"trend"`                  // последние 4 ответа от старого к новому (для спарклайна)
+	EmployeeID uuid.UUID  `json:"employee_id"`
+	FullName   string     `json:"full_name"`
+	Department string     `json:"department,omitempty"`
+	LastScore  *int       `json:"last_score,omitempty"`
+	LastAt     *time.Time `json:"last_at,omitempty"`
+	DaysSince  *int       `json:"days_since,omitempty"`
+	Comment    string     `json:"comment,omitempty"`
+	Trend      []int      `json:"trend"`
 }
 
-// TeamSummary — сводка для менеджера: каждый член его команд и средний score.
 type TeamSummary struct {
 	Members []TeamMember `json:"members"`
-	AvgLast float64      `json:"avg_last"`   // средний score последних ответов
-	RedZone int          `json:"red_zone"`   // сколько человек с last_score <= 2
-	NoData  int          `json:"no_data"`    // сколько никогда не отвечали
+	AvgLast float64      `json:"avg_last"`
+	RedZone int          `json:"red_zone"`
+	NoData  int          `json:"no_data"`
 }
 
-// Team — pulse по всем сотрудникам команд, где ownerEmpID — owner.
 func (s *PulseService) Team(ctx context.Context, ownerEmpID uuid.UUID) (TeamSummary, error) {
 	sum := TeamSummary{Members: []TeamMember{}}
 
@@ -171,11 +156,9 @@ func (s *PulseService) Team(ctx context.Context, ownerEmpID uuid.UUID) (TeamSumm
 		return sum, err
 	}
 
-	// Для каждого — последний ответ + трэнд из 4 точек.
 	for i := range sum.Members {
 		m := &sum.Members[i]
 
-		// Last.
 		var last PulseEntry
 		err := s.pool.QueryRow(ctx, `
 			SELECT id, score, COALESCE(comment, ''), created_at
@@ -206,7 +189,6 @@ func (s *PulseService) Team(ctx context.Context, ownerEmpID uuid.UUID) (TeamSumm
 		scoreSum += float64(score)
 		scoreCount++
 
-		// Trend — 4 ответа от старого к новому.
 		tRows, err := s.pool.Query(ctx, `
 			SELECT score FROM pulse_responses
 			WHERE employee_id = $1
@@ -224,7 +206,6 @@ func (s *PulseService) Team(ctx context.Context, ownerEmpID uuid.UUID) (TeamSumm
 			}
 		}
 		tRows.Close()
-		// reverse
 		for j := len(trendDesc) - 1; j >= 0; j-- {
 			m.Trend = append(m.Trend, trendDesc[j])
 		}

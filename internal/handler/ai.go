@@ -33,8 +33,6 @@ func (h *AIHandler) Mount(r fiber.Router) {
 	g.Delete("/conversations/:id", h.deleteConversation)
 }
 
-// latestConversation — id последней беседы юзера (для авто-восстановления чата).
-// Если бесед нет — возвращает {conversation_id: null}.
 func (h *AIHandler) latestConversation(c fiber.Ctx) error {
 	userID := middleware.UserID(c)
 	id, err := h.svc.LatestConversation(c.Context(), userID)
@@ -47,7 +45,6 @@ func (h *AIHandler) latestConversation(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"conversation_id": id.String()})
 }
 
-// conversationMessages — сообщения беседы. С проверкой что беседа принадлежит юзеру.
 func (h *AIHandler) conversationMessages(c fiber.Ctx) error {
 	convID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
@@ -64,8 +61,6 @@ func (h *AIHandler) conversationMessages(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"messages": list})
 }
 
-// deleteConversation — удаление беседы (через UI «Очистить чат»).
-// Идемпотентно: после успешного удаления фронт может создавать новую беседу.
 func (h *AIHandler) deleteConversation(c fiber.Ctx) error {
 	convID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
@@ -85,7 +80,6 @@ func (h *AIHandler) status(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"available": h.svc.ChatAvailable()})
 }
 
-// health — синхронный ping: проверяет, что LLM настроен и отвечает на короткий запрос.
 func (h *AIHandler) health(c fiber.Ctx) error {
 	if !h.svc.ChatAvailable() {
 		return c.JSON(fiber.Map{
@@ -130,21 +124,6 @@ func (h *AIHandler) handleChat(c fiber.Ctx) error {
 	})
 }
 
-// handleChatStream — SSE-стриминг ответа модели.
-//
-// Формат на проводе:
-//
-//	event: meta
-//	data: {"conversation_id":"..."}
-//
-//	event: delta
-//	data: {"text":"..."}
-//
-//	event: error
-//	data: {"message":"..."}
-//
-//	event: done
-//	data: {}
 func (h *AIHandler) handleChatStream(c fiber.Ctx) error {
 	var req AIChatRequest
 	if err := c.Bind().Body(&req); err != nil {

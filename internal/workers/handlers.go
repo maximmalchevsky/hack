@@ -15,8 +15,6 @@ import (
 	"worktimesync/pkg/locks"
 )
 
-// Deps — зависимости handler'ов. Поля могут быть nil, если соответствующая
-// функциональность ещё не подключена (например, в раннем спринте).
 type Deps struct {
 	Log             zerolog.Logger
 	Pool            *pgxpool.Pool
@@ -25,28 +23,25 @@ type Deps struct {
 	Recommendations *service.RecommendationService
 	Enqueuer        *Enqueuer
 	Notifier        SmartNotifierRunner
-	Notifications   *service.NotificationService // для reminder-сканера
+	Notifications   *service.NotificationService
 	TeamDigest      *service.TeamWeeklyDigestService
 	MeetingPrep     *service.MeetingPrepService
-	TaskPlanner     *service.TaskPlannerService // nil если интеграция отключена
+	TaskPlanner     *service.TaskPlannerService
 }
 
-// SmartNotifierRunner — лёгкий интерфейс, чтобы workers/ не зависел от notifier-пакета.
 type SmartNotifierRunner interface {
 	Run(ctx context.Context) (int, error)
 }
 
-// Handlers — обработчики Asynq-задач.
 type Handlers struct {
 	deps Deps
 }
 
 func NewHandlers(deps Deps) *Handlers { return &Handlers{deps: deps} }
 
-// Register регистрирует все обработчики в mux.
 func (h *Handlers) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(TaskSyncIncremental, h.handleSync)
-	mux.HandleFunc(TaskSyncBackfill, h.handleSync) // одна реализация на оба
+	mux.HandleFunc(TaskSyncBackfill, h.handleSync)
 	mux.HandleFunc(TaskOAuthRefresh, h.handleStub)
 	mux.HandleFunc(TaskOAuthRefreshGigaChat, h.handleStub)
 	mux.HandleFunc(TaskMetricsRecompute, h.handleMetricsRecompute)
@@ -62,9 +57,6 @@ func (h *Handlers) Register(mux *asynq.ServeMux) {
 	mux.HandleFunc(TaskTasksReplanOne, h.handleTasksReplanOne)
 }
 
-// handleTasksReplanOne — пересчёт плана одного сотрудника по событию
-// (изменение профиля, добавление исключения). Сбрасывает старые task
-// blocks и раскладывает план по актуальному графику.
 func (h *Handlers) handleTasksReplanOne(ctx context.Context, t *asynq.Task) error {
 	if h.deps.TaskPlanner == nil {
 		return nil
@@ -87,8 +79,6 @@ func (h *Handlers) handleTasksReplanOne(ctx context.Context, t *asynq.Task) erro
 	return nil
 }
 
-// handleTasksReplanAll — раз в час дёргаем Plan для всех сотрудников с активными
-// tracker-интеграциями (Jira). Полный пересчёт task_plan_slots.
 func (h *Handlers) handleTasksReplanAll(ctx context.Context, _ *asynq.Task) error {
 	if h.deps.Pool == nil || h.deps.TaskPlanner == nil {
 		return nil
@@ -104,7 +94,6 @@ func (h *Handlers) handleTasksReplanAll(ctx context.Context, _ *asynq.Task) erro
 			continue
 		}
 		planned++
-		// Сразу после плана — проверяем перегруз.
 		h.deps.TaskPlanner.CheckOverload(ctx, id, res)
 	}
 	if planned > 0 {
@@ -113,8 +102,6 @@ func (h *Handlers) handleTasksReplanAll(ctx context.Context, _ *asynq.Task) erro
 	return nil
 }
 
-// handleTasksAIEstimate — раз в 30 минут дёргает AI-оценку для задач без estimate.
-// Лимит 20 LLM-вызовов на сотрудника за тик — не сжигаем токены за раз.
 func (h *Handlers) handleTasksAIEstimate(ctx context.Context, _ *asynq.Task) error {
 	if h.deps.Pool == nil || h.deps.TaskPlanner == nil {
 		return nil
@@ -134,8 +121,6 @@ func (h *Handlers) handleTasksAIEstimate(ctx context.Context, _ *asynq.Task) err
 	return nil
 }
 
-// listEmpsWithTracker — employee_id всех, у кого есть активная Jira/Yandex Tracker
-// интеграция. Чтобы не дёргать planner для сотрудников без задач.
 func (h *Handlers) listEmpsWithTracker(ctx context.Context) ([]uuid.UUID, error) {
 	rows, err := h.deps.Pool.Query(ctx, `
 		SELECT DISTINCT employee_id FROM integrations
@@ -156,9 +141,6 @@ func (h *Handlers) listEmpsWithTracker(ctx context.Context) ([]uuid.UUID, error)
 	return out, rows.Err()
 }
 
-// handleSyncTickAll — scheduler пинает раз в 5 минут одной задачей. Мы
-// разворачиваем её в N задач sync:incremental для всех активных интеграций.
-// Сами sync'и выполняются в той же очереди и распараллеливаются Asynq'ом.
 func (h *Handlers) handleSyncTickAll(ctx context.Context, _ *asynq.Task) error {
 	if h.deps.Pool == nil || h.deps.Enqueuer == nil {
 		return nil
@@ -188,15 +170,11 @@ func (h *Handlers) handleSyncTickAll(ctx context.Context, _ *asynq.Task) error {
 	return nil
 }
 
-// handleTeamDigestWeekly — для каждого менеджера/HR/admin (т.е. employee, у которого есть свои команды)
-// собирает digest и кладёт в notifications. Идемпотентно за счёт UNIQUE-ничего нет, но по дате (week_start)
-// дублей не делает — потому что running раз в неделю.
 func (h *Handlers) handleTeamDigestWeekly(ctx context.Context, t *asynq.Task) error {
 	if h.deps.TeamDigest == nil || h.deps.Notifications == nil || h.deps.Pool == nil {
 		return nil
 	}
 
-	// Берём всех employees, у которых есть хотя бы одна команда, где они owner.
 	rows, err := h.deps.Pool.Query(ctx, `
 		SELECT DISTINCT e.id, u.id
 		FROM employees e
@@ -244,13 +222,6 @@ func (h *Handlers) handleTeamDigestWeekly(ctx context.Context, t *asynq.Task) er
 	return nil
 }
 
-// handleReminderScan — раз в минуту смотрит, какие события стартуют в окне
-// [now+14m, now+16m], и пушит уведомление-напоминание. Дедуп — через
-// проверку, что для этого event_id за последние 30 минут уже не было
-// reminder-нотификации.
-//
-// Логика идемпотентна: даже если задача сработает дважды подряд, второй
-// раз дедуп пропустит всех.
 func (h *Handlers) handleReminderScan(ctx context.Context, t *asynq.Task) error {
 	if h.deps.Notifications == nil || h.deps.Pool == nil {
 		return nil
@@ -313,7 +284,6 @@ func (h *Handlers) handleReminderScan(ctx context.Context, t *asynq.Task) error 
 			"end_at":   e.EndAt,
 		}
 
-		// AI-бриф для встреч 2+. Если LLM нет / ошибка / пусто — payload без brief_md.
 		if h.deps.MeetingPrep != nil {
 			brief, berr := h.deps.MeetingPrep.Build(ctx, e.EventID)
 			if berr == nil && brief != "" {
@@ -340,11 +310,6 @@ func (h *Handlers) handleReminderScan(ctx context.Context, t *asynq.Task) error 
 	return nil
 }
 
-// handleMetricsRecompute — пересчитывает A/C/L/Z/H/R одного сотрудника,
-// кладёт в Redis-кэш (через RecommendationService.ComputeMetrics).
-//
-// Использование distributed lock: одна и та же задача может прилететь
-// несколько раз (sync завершился, профиль изменился) — лочим на 30 сек.
 func (h *Handlers) handleMetricsRecompute(ctx context.Context, t *asynq.Task) error {
 	if h.deps.Recommendations == nil {
 		h.deps.Log.Warn().Str("type", t.Type()).Msg("recommendations service not configured, skipping")
@@ -360,7 +325,6 @@ func (h *Handlers) handleMetricsRecompute(ctx context.Context, t *asynq.Task) er
 	}
 
 	run := func(ctx context.Context) error {
-		// Инвалидируем кэш и пересчитываем заново.
 		h.deps.Recommendations.InvalidateMetrics(ctx, p.EmployeeID)
 		m, err := h.deps.Recommendations.ComputeMetrics(ctx, p.EmployeeID)
 		if err != nil {
@@ -391,8 +355,6 @@ func (h *Handlers) handleMetricsRecompute(ctx context.Context, t *asynq.Task) er
 	return run(ctx)
 }
 
-// handleAIRecommend — перегенерация рекомендаций для одного сотрудника.
-// Зовёт RecommendationService.Generate (тот же путь, что POST /recommendations/generate).
 func (h *Handlers) handleAIRecommend(ctx context.Context, t *asynq.Task) error {
 	if h.deps.Recommendations == nil {
 		h.deps.Log.Warn().Str("type", t.Type()).Msg("recommendations service not configured, skipping")
@@ -436,9 +398,6 @@ func (h *Handlers) handleAIRecommend(ctx context.Context, t *asynq.Task) error {
 	return run(ctx)
 }
 
-// handleDigestDaily — ночной batch: проходит по всем сотрудникам и
-// ставит каждому ai:recommend в очередь. Так весь компанию обновляем за раз,
-// но без локов на огромных транзакциях.
 func (h *Handlers) handleDigestDaily(ctx context.Context, t *asynq.Task) error {
 	if h.deps.Pool == nil || h.deps.Enqueuer == nil {
 		h.deps.Log.Warn().Msg("digest:daily skipped: deps not configured")
@@ -468,8 +427,6 @@ func (h *Handlers) handleDigestDaily(ctx context.Context, t *asynq.Task) error {
 	return rows.Err()
 }
 
-// handleNotificationSend — запускает smart-notifier для отправки уведомлений
-// о сотрудниках с устаревшими графиками. Дёргается scheduler'ом ежечасно.
 func (h *Handlers) handleNotificationSend(ctx context.Context, t *asynq.Task) error {
 	if h.deps.Notifier == nil {
 		h.deps.Log.Warn().Str("type", t.Type()).Msg("notifier not configured, skipping")
@@ -495,7 +452,6 @@ func (h *Handlers) handleSync(ctx context.Context, t *asynq.Task) error {
 		return fmt.Errorf("decode payload: %w", err)
 	}
 
-	// distributed lock — чтобы одна интеграция не синхронизировалась дважды одновременно.
 	if h.deps.Locks != nil {
 		executed, err := h.deps.Locks.TryLockOrSkip(ctx,
 			"sync:integration:"+p.IntegrationID.String(),
@@ -536,8 +492,6 @@ func (h *Handlers) runSync(ctx context.Context, idStr, taskType string) error {
 		Int("events_loaded", res.EventsLoaded).
 		Msg("sync done")
 
-	// После успешного sync пересчитываем метрики и обновляем рекомендации
-	// для сотрудника, чьи события только что приехали.
 	if h.deps.Enqueuer != nil && res.EmployeeID != uuid.Nil {
 		_ = h.deps.Enqueuer.EnqueueMetricsRecompute(res.EmployeeID)
 		_ = h.deps.Enqueuer.EnqueueAIRecommend(res.EmployeeID)

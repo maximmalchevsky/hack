@@ -6,7 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// IntegrationProvider — тип источника данных.
 type IntegrationProvider string
 
 const (
@@ -29,7 +28,6 @@ func (p IntegrationProvider) Valid() bool {
 	return false
 }
 
-// IntegrationStatus — состояние интеграции.
 type IntegrationStatus string
 
 const (
@@ -39,21 +37,20 @@ const (
 	IntegrationStatusPending   IntegrationStatus = "pending"
 )
 
-// Integration — подключённый источник.
 type Integration struct {
-	ID                uuid.UUID
-	EmployeeID        uuid.UUID
-	Provider          IntegrationProvider
-	AccountEmail      string
-	AccountLabel      string
-	AccessTokenEnc    string // base64(AES-GCM)
-	RefreshTokenEnc   string
-	ExpiresAt         *time.Time
-	Status            IntegrationStatus
-	LastSyncAt        *time.Time
-	LastError         string
-	WebhookSubID      string
-	ConfigJSON        []byte // jsonb
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID              uuid.UUID
+	EmployeeID      uuid.UUID
+	Provider        IntegrationProvider
+	AccountEmail    string
+	AccountLabel    string
+	AccessTokenEnc  string
+	RefreshTokenEnc string
+	ExpiresAt       *time.Time
+	Status          IntegrationStatus
+	LastSyncAt      *time.Time
+	LastError       string
+	WebhookSubID    string
+	ConfigJSON      []byte
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
 }

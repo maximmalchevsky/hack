@@ -12,7 +12,6 @@ import (
 	"worktimesync/internal/repository"
 )
 
-// Доменные ошибки.
 var (
 	ErrInvalidException = errors.New("exception: invalid kind")
 	ErrInvalidRange     = errors.New("exception: end_at must be after start_at")

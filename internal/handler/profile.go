@@ -13,7 +13,6 @@ import (
 	"worktimesync/internal/workers"
 )
 
-// ProfileHandler — /api/v1/profiles, /api/v1/me/profile.
 type ProfileHandler struct {
 	svc      *service.ProfileService
 	enqueuer *workers.Enqueuer
@@ -23,12 +22,6 @@ func NewProfileHandler(svc *service.ProfileService, enq *workers.Enqueuer) *Prof
 	return &ProfileHandler{svc: svc, enqueuer: enq}
 }
 
-// triggerRecompute — после изменений профиля заводим перерасчёт метрик +
-// перегенерацию рекомендаций + пересчёт плана задач. Все три — best-effort
-// async через Asynq.
-//
-// Без replan'а плана старые task blocks на бывших рабочих днях остаются
-// в calendar_events и отображаются как «вне графика» в heatmap.
 func (h *ProfileHandler) triggerRecompute(empID uuid.UUID) {
 	if h.enqueuer == nil || empID == uuid.Nil {
 		return
@@ -38,7 +31,6 @@ func (h *ProfileHandler) triggerRecompute(empID uuid.UUID) {
 	_ = h.enqueuer.EnqueueTasksReplanOne(empID)
 }
 
-// Mount: ожидает, что вызывающий код уже навесил AuthRequired.
 func (h *ProfileHandler) Mount(r fiber.Router) {
 	r.Get("/profiles/:employee_id", h.getActive)
 	r.Get("/profiles/:employee_id/history", h.getHistory)
@@ -87,7 +79,6 @@ func (h *ProfileHandler) update(c fiber.Ctx) error {
 	return h.updateFor(c, empID)
 }
 
-// updateMine — обновить свой собственный профиль (employee_id из JWT).
 func (h *ProfileHandler) updateMine(c fiber.Ctx) error {
 	empID := middleware.EmployeeID(c)
 	if empID == uuid.Nil {

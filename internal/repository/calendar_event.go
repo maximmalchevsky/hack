@@ -35,14 +35,9 @@ type UpsertEventInput struct {
 	Organizer      string
 	AttendeesCount int
 	Status         domain.EventStatus
-	// Category — опционально. Если задано — пишем; иначе на UPDATE НЕ затираем
-	// существующее значение (через COALESCE в SQL). Сценарий: первый insert
-	// идёт из sync без category, потом пользователь / GigaChat проставил —
-	// следующий sync не должен это сбить.
-	Category string
+	Category       string
 }
 
-// Upsert — INSERT…ON CONFLICT по (integration_id, source_event_id).
 func (r *CalendarEventRepo) Upsert(ctx context.Context, in UpsertEventInput) (*domain.CalendarEvent, error) {
 	if !in.EndAt.After(in.StartAt) {
 		return nil, fmt.Errorf("end_at must be after start_at")
@@ -135,9 +130,6 @@ func (r *CalendarEventRepo) Exclude(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// SetCategory — меняет категорию встречи. Проверяет, что событие принадлежит
-// сотруднику (защита от чужих апдейтов). Пустая строка — сбрасывает в NULL,
-// чтобы при следующем подсчёте GigaChat мог пере-классифицировать.
 func (r *CalendarEventRepo) SetCategory(
 	ctx context.Context,
 	eventID, employeeID uuid.UUID,
@@ -157,9 +149,6 @@ func (r *CalendarEventRepo) SetCategory(
 	return nil
 }
 
-// SetTitle — меняет название события. Проверяет принадлежность сотруднику.
-// Пустую строку не принимаем (валидируется в handler), здесь дополнительная
-// защита — NULLIF не ставим, title NOT NULL.
 func (r *CalendarEventRepo) SetTitle(
 	ctx context.Context,
 	eventID, employeeID uuid.UUID,
@@ -194,8 +183,6 @@ func (r *CalendarEventRepo) Count(ctx context.Context, employeeID uuid.UUID, fro
 	}
 	return n, nil
 }
-
-// --- helpers ---
 
 const calendarEventCols = `
 	SELECT id, employee_id, integration_id, source_event_id,

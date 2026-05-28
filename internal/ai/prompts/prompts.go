@@ -1,9 +1,3 @@
-// Package prompts — встроенные системные промпты для AI-модуля.
-//
-// Использование:
-//
-//	import "worktimesync/internal/ai/prompts"
-//	systemMsg := prompts.ChatAssistant
 package prompts
 
 import _ "embed"

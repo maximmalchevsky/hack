@@ -17,14 +17,9 @@ import (
 )
 
 const (
-	// WSNotificationsChannel — Redis pub/sub-канал для рассылки уведомлений
-	// конкретному пользователю. Формат ключа: ws:user:<user_id>.
 	WSNotificationsChannel = "ws:user:"
 )
 
-// NotificationService — создание + чтение + публикация в Redis pub/sub.
-// Дополнительные каналы доставки (email, telegram) подключаются через
-// WithTransports — best-effort, ошибки транспортов не валят основной flow.
 type NotificationService struct {
 	pool       *pgxpool.Pool
 	repo       *repository.NotificationRepo
@@ -40,8 +35,6 @@ func NewNotificationService(pool *pgxpool.Pool, rdb *redis.Client) *Notification
 	}
 }
 
-// WithTransports — DI: подключаем дополнительные каналы (email, telegram).
-// Можно вызывать с nil-ами, отфильтруем.
 func (s *NotificationService) WithTransports(ts ...notify.Transport) *NotificationService {
 	for _, t := range ts {
 		if t == nil {
@@ -55,7 +48,6 @@ func (s *NotificationService) WithTransports(ts ...notify.Transport) *Notificati
 	return s
 }
 
-// CreateInput — параметры нового уведомления.
 type CreateInput struct {
 	UserID  uuid.UUID
 	Kind    string
@@ -65,7 +57,6 @@ type CreateInput struct {
 	Payload map[string]any
 }
 
-// Push — сохраняет уведомление в БД и публикует в Redis для WS-доставки.
 func (s *NotificationService) Push(ctx context.Context, in CreateInput) (*domain.Notification, error) {
 	var raw []byte
 	if in.Payload != nil {
@@ -83,7 +74,6 @@ func (s *NotificationService) Push(ctx context.Context, in CreateInput) (*domain
 		return nil, err
 	}
 
-	// Публикация для активных WS-сессий пользователя.
 	if s.redis != nil {
 		msg, _ := json.Marshal(map[string]any{
 			"type":         "notification.created",
@@ -92,8 +82,6 @@ func (s *NotificationService) Push(ctx context.Context, in CreateInput) (*domain
 		_ = s.redis.Publish(ctx, WSNotificationsChannel+in.UserID.String(), msg).Err()
 	}
 
-	// Дополнительные каналы — email/telegram. Запускаем в горутине, чтобы
-	// не блокировать ответ HTTP-запроса и не валить основной поток.
 	if len(s.transports) > 0 {
 		go s.dispatchToTransports(in.UserID, *n)
 	}
@@ -101,14 +89,10 @@ func (s *NotificationService) Push(ctx context.Context, in CreateInput) (*domain
 	return n, nil
 }
 
-// dispatchToTransports — выполняется в отдельной горутине.
-// Получает свежий контекст (background), потому что родительский может быть
-// уже отменён к моменту отправки.
 func (s *NotificationService) dispatchToTransports(userID uuid.UUID, n domain.Notification) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15_000_000_000) // 15s
+	ctx, cancel := context.WithTimeout(context.Background(), 15_000_000_000)
 	defer cancel()
 
-	// Подгружаем prefs пользователя одним запросом.
 	var (
 		email, name string
 		emailOn     bool
@@ -127,7 +111,6 @@ func (s *NotificationService) dispatchToTransports(userID uuid.UUID, n domain.No
 		return
 	}
 
-	// Фильтр по типу: если задан непустой список — пропускаем все, кроме него.
 	if len(kinds) > 0 {
 		allowed := false
 		for _, k := range kinds {
@@ -141,9 +124,6 @@ func (s *NotificationService) dispatchToTransports(userID uuid.UUID, n domain.No
 		}
 	}
 
-	// Фильтр по минимальному приоритету. Маппинг приоритета по kind:
-	// high: meeting_*, event_reminder; medium: recommendation, pulse_check_due, system;
-	// low: team_digest, weekly_summary, stale_profile.
 	pr := priorityOfKind(n.Kind)
 	if priorityRank(pr) < priorityRank(minPriority) {
 		return
@@ -202,8 +182,6 @@ func (s *NotificationService) MarkAllRead(ctx context.Context, userID uuid.UUID)
 	return s.repo.MarkAllRead(ctx, userID)
 }
 
-// priorityOfKind — какой «приоритет» у уведомления данного типа.
-// Используется для фильтра notify_min_priority в dispatchToTransports.
 func priorityOfKind(kind string) string {
 	switch kind {
 	case "meeting_proposal", "meeting_reminder", "meeting_response",
@@ -218,7 +196,6 @@ func priorityOfKind(kind string) string {
 	}
 }
 
-// priorityRank — для сравнения low < medium < high.
 func priorityRank(p string) int {
 	switch p {
 	case "high":
@@ -230,9 +207,6 @@ func priorityRank(p string) int {
 	}
 }
 
-// --- Batch-уведомления по сценарию (для ИИ-ассистента) ---
-
-// NotifyBatchResult — счётчики после рассылки.
 type NotifyBatchResult struct {
 	Sent     int      `json:"sent"`
 	Skipped  int      `json:"skipped"`
@@ -240,9 +214,6 @@ type NotifyBatchResult struct {
 	Emails   []string `json:"emails,omitempty"`
 }
 
-// notifyTemplates — шаблоны title/body/link по kind. Используются в
-// NotifyByKind, чтобы фронт/ИИ не передавали полный текст, а указали только
-// семантику ситуации (burnout/overload/anomaly/stale_profile).
 var notifyTemplates = map[string]struct {
 	title string
 	body  string
@@ -270,9 +241,6 @@ var notifyTemplates = map[string]struct {
 	},
 }
 
-// NotifyByKind — для каждого employee_id находит user_id и шлёт ему in-app
-// notification по шаблону kind. Дедуп: если в последние 24 часа уже было
-// такое же kind для того же user — пропускаем.
 func (s *NotificationService) NotifyByKind(
 	ctx context.Context,
 	kind string,
@@ -287,7 +255,6 @@ func (s *NotificationService) NotifyByKind(
 		return &NotifyBatchResult{}, nil
 	}
 
-	// emp → user + email одним запросом.
 	rows, err := s.pool.Query(ctx, `
 		SELECT u.id, COALESCE(u.email, '')
 		FROM employees e
@@ -311,7 +278,6 @@ func (s *NotificationService) NotifyByKind(
 	}
 	rows.Close()
 
-	// Дедуп: кому уже слали этот же kind за последние 24ч.
 	recent := map[uuid.UUID]struct{}{}
 	if len(cands) > 0 {
 		ids := make([]uuid.UUID, 0, len(cands))

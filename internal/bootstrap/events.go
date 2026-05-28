@@ -12,17 +12,6 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// ensureDemoEvents — если у демо-сотрудника нет событий, генерит ему пачку.
-// Идемпотентно: проверяет по employee_id.
-//
-// Цель — наполнить систему реалистичными метриками:
-// - Игорь (manager/office) — перегруз L>0.8
-// - Сергей (NSK/remote) — TZ-drift: встречи в MSK-время выходят за его 9-18 NSK
-// - Дмитрий (LIS/remote, HR=office) — HR-mismatch
-// - Все — конфликты по выходным/ночью для разнообразия
-// ensureDemoEvents возвращает true, если в этом запуске реально были созданы
-// события (а не просто всё уже существовало). Это позволяет caller'у решить,
-// нужно ли заводить Asynq-задачи на пересчёт.
 func ensureDemoEvents(ctx context.Context, db *pgxpool.Pool, log zerolog.Logger) (bool, error) {
 	people := demoPeople()
 	created := 0
@@ -73,10 +62,7 @@ type demoEvent struct {
 	Organizer string
 }
 
-// generateEventsFor возвращает 15-30 событий на ближайшие [-7, +14] дней
-// по сценарию, выбираемому по email сотрудника.
 func generateEventsFor(p demoPerson, empID uuid.UUID) []demoEvent {
-	// Стабильный seed для воспроизводимости: hash employeeID.
 	r := rand.New(rand.NewSource(int64(empID[0])<<24 | int64(empID[1])<<16 | int64(empID[2])<<8 | int64(empID[3])))
 
 	loc, err := time.LoadLocation(p.Timezone)
@@ -87,7 +73,6 @@ func generateEventsFor(p demoPerson, empID uuid.UUID) []demoEvent {
 	scenario := pickScenario(p.Email)
 	out := make([]demoEvent, 0, 25)
 
-	// Стартуем с понедельника последней недели, генерируем 3 недели вперёд.
 	now := time.Now().In(loc)
 	monday := startOfWeek(now).AddDate(0, 0, -7)
 
@@ -97,7 +82,7 @@ func generateEventsFor(p demoPerson, empID uuid.UUID) []demoEvent {
 
 		switch scenario {
 		case "overloaded":
-			// Игорь: 4-6 встреч в день, плотный график 9-18
+
 			if weekday == time.Saturday || weekday == time.Sunday {
 				continue
 			}
@@ -105,34 +90,31 @@ func generateEventsFor(p demoPerson, empID uuid.UUID) []demoEvent {
 				[]string{"Планёрка", "1-on-1", "Sync с командой", "Архитектурный", "Демо", "Ретро"})
 
 		case "tzdrift":
-			// Сергей: NSK (UTC+7), but встречи запланированы в MSK-время (UTC+3)
-			// → start_at в UTC, а в его TZ это поздно (15:00 MSK = 19:00 NSK)
+
 			if weekday == time.Saturday || weekday == time.Sunday {
 				continue
 			}
-			// 2-3 события в "его рабочее" (10-12 NSK) + 2-3 события в "MSK-окно" (13-16 MSK = 17-20 NSK)
 			out = appendDay(out, r, day, loc, 2, 10, 12,
 				[]string{"Stand-up", "Локальная встреча"})
-			// MSK-командные — снаружи рабочего профиля сотрудника
+
 			out = appendDay(out, r, day, loc, 2+r.Intn(2), 17, 20,
 				[]string{"MSK Sync", "Demo с продактом", "Архитектурный комитет"})
 
 		case "hr_mismatch":
-			// Дмитрий: HR говорит "office", фактически remote (LIS UTC+1)
-			// → встречи в его утро/вечер, нерегулярный паттерн
+
 			if weekday == time.Saturday || weekday == time.Sunday {
 				continue
 			}
 			out = appendDay(out, r, day, loc, 2+r.Intn(2), 11, 18,
 				[]string{"Code review", "1-on-1", "Frontend sync", "Дизайн-ревью"})
-			// Иногда встречи поздно вечером (после 19) — типично для remote-кочующих
+
 			if r.Float64() < 0.4 {
 				out = appendDay(out, r, day, loc, 1, 19, 21,
 					[]string{"Late call"})
 			}
 
 		case "weekend_burn":
-			// у кого-нибудь должны быть события в выходные — для C>0
+
 			if weekday >= time.Monday && weekday <= time.Friday {
 				out = appendDay(out, r, day, loc, 2+r.Intn(2), 10, 18,
 					[]string{"Daily", "Sync", "Review"})
@@ -143,7 +125,7 @@ func generateEventsFor(p demoPerson, empID uuid.UUID) []demoEvent {
 			}
 
 		case "sparse":
-			// Ольга: мало встреч, аналитик
+
 			if weekday == time.Saturday || weekday == time.Sunday {
 				continue
 			}
@@ -152,7 +134,7 @@ func generateEventsFor(p demoPerson, empID uuid.UUID) []demoEvent {
 					[]string{"Data review", "Метрики недели", "Отчёт"})
 			}
 
-		default: // "healthy"
+		default:
 			if weekday == time.Saturday || weekday == time.Sunday {
 				continue
 			}
@@ -166,13 +148,13 @@ func generateEventsFor(p demoPerson, empID uuid.UUID) []demoEvent {
 
 func pickScenario(email string) string {
 	switch email {
-	case "igor@worktime.local": // Игорь Климов
+	case "igor@worktime.local":
 		return "overloaded"
-	case "plamadil@worktime.local": // Олег Пламадил (NSK, TZ-drift)
+	case "plamadil@worktime.local":
 		return "tzdrift"
-	case "daniil@iqj.app": // Даниил Игаев (LIS, HR-mismatch)
+	case "daniil@iqj.app":
 		return "hr_mismatch"
-	case "petrov@worktime.local": // Александр Петров (аналитик)
+	case "petrov@worktime.local":
 		return "sparse"
 	default:
 		return "healthy"
@@ -182,17 +164,15 @@ func pickScenario(email string) string {
 func startOfWeek(t time.Time) time.Time {
 	wd := int(t.Weekday())
 	if wd == 0 {
-		wd = 7 // воскресенье → 7
+		wd = 7
 	}
 	d := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
 	return d.AddDate(0, 0, -(wd - 1))
 }
 
-// appendDay генерит count событий случайной длительности 30-90 мин на день day
-// в окне [hourFrom, hourTo) с произвольными названиями из titles.
 func appendDay(out []demoEvent, r *rand.Rand, day time.Time, loc *time.Location,
 	count, hourFrom, hourTo int, titles []string) []demoEvent {
-	// слоты по 30 минут, чтобы события не пересекались
+
 	slots := (hourTo-hourFrom)*2 - 1
 	if slots <= 0 || count <= 0 {
 		return out
@@ -208,7 +188,7 @@ func appendDay(out []demoEvent, r *rand.Rand, day time.Time, loc *time.Location,
 		startMin := (slot % 2) * 30
 		start := time.Date(day.Year(), day.Month(), day.Day(),
 			startHour, startMin, 0, 0, loc)
-		duration := time.Duration(30+r.Intn(3)*30) * time.Minute // 30/60/90
+		duration := time.Duration(30+r.Intn(3)*30) * time.Minute
 		end := start.Add(duration)
 		title := titles[r.Intn(len(titles))]
 		out = append(out, demoEvent{

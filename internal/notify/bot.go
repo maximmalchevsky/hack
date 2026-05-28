@@ -13,19 +13,6 @@ import (
 	tele "gopkg.in/telebot.v3"
 )
 
-// Bot — обёртка над telebot.Bot для приёма привязок chat_id к user.
-//
-// Поток:
-//  1. Пользователь жмёт «Подключить Telegram» на /profile.
-//  2. Фронт открывает t.me/<bot_username>?start=<user_id>.
-//  3. Telegram открывает чат с ботом и присылает /start <user_id>.
-//  4. Хендлер ниже записывает users.telegram_chat_id = chat_id.
-//
-// Используем user_id как payload deeplink'а — это нормально для хакатона.
-// В проде надо одноразовые подписанные токены, чтобы payload нельзя было
-// подменить и привязать чужого юзера.
-// PulseSubmitter — минимальный интерфейс для записи pulse-ответа из бота.
-// Возврат игнорируется, важна только ошибка.
 type PulseSubmitter interface {
 	SubmitFromBot(ctx context.Context, empID uuid.UUID, score int) error
 }
@@ -37,8 +24,6 @@ type Bot struct {
 	pulse PulseSubmitter
 }
 
-// NewBot создаёт бота. Возвращает (nil, nil) если token пустой — это значит
-// функциональность не настроена и нужно её просто пропустить.
 func NewBot(token string, pool *pgxpool.Pool, log zerolog.Logger) (*Bot, error) {
 	if token == "" {
 		return nil, nil
@@ -64,16 +49,12 @@ func NewBot(token string, pool *pgxpool.Pool, log zerolog.Logger) (*Bot, error) 
 	b.Handle("/tomorrow", bot.onTomorrow)
 	b.Handle("/pulse", bot.onPulse)
 	b.Handle("/team", bot.onTeam)
-	// Кнопки Pulse — callback'и (inline-keyboard).
 	b.Handle(tele.OnCallback, bot.onCallback)
-	// Любое другое сообщение — мягкий help.
 	b.Handle(tele.OnText, bot.onText)
 
 	return bot, nil
 }
 
-// WithPulse — DI, чтобы бот мог сохранять ответы на /pulse.
-// Передаётся обёртка над *service.PulseService.
 func (b *Bot) WithPulse(p PulseSubmitter) *Bot {
 	if b == nil {
 		return b
@@ -82,8 +63,6 @@ func (b *Bot) WithPulse(p PulseSubmitter) *Bot {
 	return b
 }
 
-// Run — запускает long-polling. Блокирующий вызов. Кладите в горутину.
-// Остановить можно через ctx (вызывает b.Stop()).
 func (b *Bot) Run(ctx context.Context) {
 	if b == nil {
 		return
@@ -97,7 +76,6 @@ func (b *Bot) Run(ctx context.Context) {
 	b.log.Info().Msg("telegram bot stopped")
 }
 
-// onStart — обработчик /start [user_uuid].
 func (b *Bot) onStart(c tele.Context) error {
 	payload := strings.TrimSpace(c.Message().Payload)
 	if payload == "" {
@@ -115,7 +93,6 @@ func (b *Bot) onStart(c tele.Context) error {
 
 	chatID := c.Sender().ID
 
-	// Проверяем что user существует и обновляем telegram_chat_id.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -141,7 +118,6 @@ func (b *Bot) onStart(c tele.Context) error {
 	))
 }
 
-// onStop — отвязка / приостановка уведомлений.
 func (b *Bot) onStop(c tele.Context) error {
 	chatID := c.Sender().ID
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -180,8 +156,6 @@ func (b *Bot) onText(c tele.Context) error {
 	)
 }
 
-// Username — для генерации deeplink на фронте, если переменная окружения
-// TELEGRAM_BOT_USERNAME не задана, фронт может получить её отсюда через API.
 func (b *Bot) Username() string {
 	if b == nil || b.bot == nil {
 		return ""
@@ -189,5 +163,4 @@ func (b *Bot) Username() string {
 	return b.bot.Me.Username
 }
 
-// ErrBotDisabled — для совместимости когда бот не настроен.
 var ErrBotDisabled = errors.New("telegram bot disabled")

@@ -1,14 +1,3 @@
-// Package service — ExportService собирает Excel-выгрузки для отчётов и AI-чата.
-//
-// Доступные пресеты (kind):
-//
-//	upcoming_vacations — отпуска и командировки на ближайшие 30 дней
-//	stale_profiles     — сотрудники с устаревшим профилем
-//	conflicts          — события вне рабочего времени по всем сотрудникам
-//	all_employees      — справочник всех сотрудников
-//
-// Поток: AI-чат предлагает кнопку → фронт fetch'ит /api/v1/exports/:kind →
-// получает .xlsx и сохраняет через blob URL.
 package service
 
 import (
@@ -33,7 +22,6 @@ func NewExportService(pool *pgxpool.Pool, diag *DiagnosticsService, conf *Confli
 	return &ExportService{pool: pool, diagnostics: diag, conflicts: conf}
 }
 
-// ExportKind — поддерживаемые пресеты.
 type ExportKind string
 
 const (
@@ -43,7 +31,6 @@ const (
 	ExportAllEmployees      ExportKind = "all_employees"
 )
 
-// ExportResult — байты файла + предлагаемое имя.
 type ExportResult struct {
 	Filename string
 	Data     []byte
@@ -51,7 +38,6 @@ type ExportResult struct {
 
 var ErrUnknownExportKind = errors.New("export: unknown kind")
 
-// Build — генерация выгрузки по пресету.
 func (s *ExportService) Build(ctx context.Context, kind ExportKind) (*ExportResult, error) {
 	switch kind {
 	case ExportUpcomingVacations:
@@ -67,8 +53,6 @@ func (s *ExportService) Build(ctx context.Context, kind ExportKind) (*ExportResu
 	}
 }
 
-// ExportDataset — JSON-представление выгрузки. Используется в /reports
-// для рендера PDF на фронте через html2pdf (без бэк-зависимостей).
 type ExportDataset struct {
 	Kind    string   `json:"kind"`
 	Title   string   `json:"title"`
@@ -76,29 +60,15 @@ type ExportDataset struct {
 	Rows    [][]any  `json:"rows"`
 }
 
-// DatasetOptions — фильтры для конструктора отчётов.
-// Все поля optional: nil/пустой массив = «без фильтра».
 type DatasetOptions struct {
-	// Период (применяется к vacations и conflicts).
-	From *time.Time
-	To   *time.Time
-	// Отделы (применяется к vacations / stale / conflicts / employees).
-	Departments []string
-	// Колонки — оставляем только эти headers (по имени, регистрозависимо).
-	// Если пусто — все колонки исходного пресета.
-	Columns []string
-	// Типы исключений (применяется к vacations):
-	// vacation | sick_leave | business_trip | personal_hours | custom.
-	// Пусто — все.
-	Kinds []string
-	// RBAC: если задан, выгрузка ограничена только этими сотрудниками.
-	// Используется для manager/pm — они видят только участников своих команд.
-	// admin/hr ставят nil — видят всех.
+	From           *time.Time
+	To             *time.Time
+	Departments    []string
+	Columns        []string
+	Kinds          []string
 	RestrictEmpIDs []uuid.UUID
 }
 
-// restrictedSet — вспомогательный set для O(1) lookup в циклах после SQL.
-// Возвращает nil если ограничения нет (т.е. все проходят).
 func (opts *DatasetOptions) restrictedSet() map[string]struct{} {
 	if len(opts.RestrictEmpIDs) == 0 {
 		return nil
@@ -110,12 +80,6 @@ func (opts *DatasetOptions) restrictedSet() map[string]struct{} {
 	return out
 }
 
-// BuildDataset — то же что Build, но в JSON-формате (без XLSX-сериализации).
-// SQL-логика частично продублирована из buildXxx — это сознательно: чтобы
-// первый билдер (XLSX) оставался простым линейным, а JSON-вариант мы могли
-// тонко форматировать (читаемые даты, локализованные значения).
-//
-// opts применяет фильтры по периоду / отделу и срезает колонки.
 func (s *ExportService) BuildDataset(ctx context.Context, kind ExportKind, opts DatasetOptions) (*ExportDataset, error) {
 	var (
 		ds  *ExportDataset
@@ -142,7 +106,6 @@ func (s *ExportService) BuildDataset(ctx context.Context, kind ExportKind, opts 
 	return ds, nil
 }
 
-// projectColumns — оставляем только перечисленные headers (порядок — по opts.Columns).
 func projectColumns(ds *ExportDataset, cols []string) *ExportDataset {
 	idx := map[string]int{}
 	for i, h := range ds.Headers {
@@ -153,13 +116,13 @@ func projectColumns(ds *ExportDataset, cols []string) *ExportDataset {
 	for _, c := range cols {
 		i, ok := idx[c]
 		if !ok {
-			continue // несуществующая колонка — игнор
+			continue
 		}
 		keep = append(keep, i)
 		newHeaders = append(newHeaders, c)
 	}
 	if len(keep) == 0 {
-		return ds // ничего валидного не передали — отдадим как есть
+		return ds
 	}
 	newRows := make([][]any, 0, len(ds.Rows))
 	for _, row := range ds.Rows {
@@ -181,9 +144,6 @@ func projectColumns(ds *ExportDataset, cols []string) *ExportDataset {
 	}
 }
 
-// DatasetToXLSX — конвертирует уже посчитанный dataset в XLSX-файл.
-// Используется конструктором: BuildDataset(... с фильтрами) → DatasetToXLSX.
-// Старый Build(kind) остаётся для не-фильтрованного скачивания.
 func (s *ExportService) DatasetToXLSX(ds *ExportDataset, filenamePrefix string) (*ExportResult, error) {
 	f := excelize.NewFile()
 	defer f.Close()
@@ -226,7 +186,6 @@ func (s *ExportService) datasetUpcomingVacations(ctx context.Context, opts Datas
 		to = *opts.To
 	}
 
-	// Базовый запрос с переменным набором условий (departments / kinds / rbac — необязательны).
 	args := []any{from, to}
 	extra := ""
 	if len(opts.Departments) > 0 {
@@ -417,7 +376,6 @@ func (s *ExportService) datasetAllEmployees(ctx context.Context, opts DatasetOpt
 	return ds, nil
 }
 
-// makeStringSet — nil если фильтра нет (все проходят), иначе set из переданных значений.
 func makeStringSet(vals []string) map[string]struct{} {
 	if len(vals) == 0 {
 		return nil
@@ -429,7 +387,6 @@ func makeStringSet(vals []string) map[string]struct{} {
 	return out
 }
 
-// inStringSet — true если set=nil (фильтра нет) или ключ есть.
 func inStringSet(set map[string]struct{}, v string) bool {
 	if set == nil {
 		return true
@@ -455,7 +412,7 @@ func (s *ExportService) buildUpcomingVacations(ctx context.Context) (*ExportResu
 
 	type row struct {
 		fullName, email, role, dept, kind, comment string
-		start, end                                  time.Time
+		start, end                                 time.Time
 	}
 	var list []row
 	for rows.Next() {
@@ -523,7 +480,7 @@ func (s *ExportService) buildStaleProfiles(ctx context.Context) (*ExportResult, 
 		}
 		days := r.DaysSinceUpdate
 		if r.Group == "unknown" {
-			days = -1 // покажем как "—"
+			days = -1
 		}
 		daysCell := ""
 		if days >= 0 {
@@ -635,14 +592,11 @@ func (s *ExportService) buildAllEmployees(ctx context.Context) (*ExportResult, e
 	return finalize(f, fmt.Sprintf("worktime-employees-%s.xlsx", time.Now().Format("2006-01-02")))
 }
 
-// --- helpers ---
-
 func writeHeaders(f *excelize.File, sheet string, headers []string) {
 	for i, h := range headers {
 		cell, _ := excelize.CoordinatesToCellName(i+1, 1)
 		_ = f.SetCellValue(sheet, cell, h)
 	}
-	// Жирный header + лёгкая подложка
 	style, err := f.NewStyle(&excelize.Style{
 		Font: &excelize.Font{Bold: true},
 		Fill: excelize.Fill{Type: "pattern", Color: []string{"#EEF2FF"}, Pattern: 1},
@@ -657,8 +611,6 @@ func writeHeaders(f *excelize.File, sheet string, headers []string) {
 	}
 }
 
-// autoFitColumns — простой авто-резайз: для каждой колонки берём максимум
-// длины строкового представления + небольшая прибавка.
 func autoFitColumns(f *excelize.File, sheet string, cols int) {
 	rows, err := f.GetRows(sheet)
 	if err != nil {

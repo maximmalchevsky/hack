@@ -1,12 +1,3 @@
-// Package ical — провайдер для iCal/ICS feed-источников.
-//
-// Поддерживает:
-//   - загрузку .ics по URL (для feed-подписок типа Google "Получить публичный URL")
-//   - upload .ics файла (через handler, передаётся io.Reader в Parse)
-//   - разворачивание RRULE на заданный горизонт через teambition/rrule-go
-//
-// OAuth не поддерживается — Token хранит только URL/secret. Push-webhooks тоже,
-// поэтому RegisterWebhook возвращает ErrWebhookNotSupported.
 package ical
 
 import (
@@ -25,7 +16,6 @@ import (
 	"worktimesync/internal/integrations"
 )
 
-// Provider — реализация CalendarProvider для iCal/ICS.
 type Provider struct {
 	httpClient *http.Client
 }
@@ -38,8 +28,6 @@ func New() *Provider {
 
 func (p *Provider) Name() integrations.Provider { return integrations.ProviderICal }
 
-// Authenticate — для iCal достаточно проверить URL и/или прочитать файл.
-// В authCode передаётся URL feed'а или метка ручного импорта "manual".
 func (p *Provider) Authenticate(ctx context.Context, authCode string) (*integrations.Token, error) {
 	if authCode == "" {
 		return nil, errors.New("ical: empty auth code (expected feed URL or 'manual')")
@@ -56,14 +44,10 @@ func (p *Provider) Authenticate(ctx context.Context, authCode string) (*integrat
 	}, nil
 }
 
-// RefreshToken — для iCal не требуется. Возвращаем nil, nil.
 func (p *Provider) RefreshToken(ctx context.Context, _ *integrations.Token) (*integrations.Token, error) {
 	return nil, nil
 }
 
-// FetchEvents — загружает события. Если Token.TokenType == "feed",
-// идём по URL; если "manual" — возвращаем пустой результат (события
-// загружаются отдельным вызовом Parse handler'ом при upload'е).
 func (p *Provider) FetchEvents(ctx context.Context, token *integrations.Token, from, to time.Time) ([]integrations.Event, error) {
 	if token == nil {
 		return nil, errors.New("ical: nil token")
@@ -105,8 +89,6 @@ func (p *Provider) ParseWebhook(r *http.Request) (*integrations.WebhookEvent, er
 	return nil, integrations.ErrWebhookNotSupported
 }
 
-// Parse читает поток .ics и возвращает нормализованные события в диапазоне [from, to].
-// Рекуррентные события разворачиваются через rrule-go.
 func Parse(r io.Reader, from, to time.Time) ([]integrations.Event, error) {
 	cal, err := ics.ParseCalendar(r)
 	if err != nil {
@@ -117,7 +99,6 @@ func Parse(r io.Reader, from, to time.Time) ([]integrations.Event, error) {
 	for _, vevent := range cal.Events() {
 		evs, err := expandEvent(vevent, from, to)
 		if err != nil {
-			// не падаем на одном битом событии, пропускаем
 			continue
 		}
 		out = append(out, evs...)
@@ -153,7 +134,6 @@ func expandEvent(v *ics.VEvent, from, to time.Time) ([]integrations.Event, error
 	}
 	dtEnd, err := v.GetEndAt()
 	if err != nil {
-		// если нет DTEND — событие на весь день, ставим +24h
 		dtEnd = dtStart.Add(24 * time.Hour)
 	}
 	if dtEnd.Before(dtStart) {
@@ -175,7 +155,6 @@ func expandEvent(v *ics.VEvent, from, to time.Time) ([]integrations.Event, error
 		Status:      "confirmed",
 	}
 
-	// Не рекуррентное — одно событие
 	if rruleProp == nil || rruleProp.Value == "" {
 		if !overlaps(base.StartAt, base.EndAt, from, to) {
 			return nil, nil
@@ -183,7 +162,6 @@ func expandEvent(v *ics.VEvent, from, to time.Time) ([]integrations.Event, error
 		return []integrations.Event{base}, nil
 	}
 
-	// Рекуррентное — разворачиваем через rrule-go
 	roptions, err := rrule.StrToROption(rruleProp.Value)
 	if err != nil {
 		return nil, fmt.Errorf("RRULE: %w", err)
@@ -204,7 +182,6 @@ func expandEvent(v *ics.VEvent, from, to time.Time) ([]integrations.Event, error
 		e.IsRecurring = true
 		e.RRule = rruleProp.Value
 		e.RecurrenceRoot = uid
-		// уникальный source ID — UID + порядковый номер
 		e.SourceID = fmt.Sprintf("%s::%d", uid, i)
 		e.StartAt = st.UTC()
 		e.EndAt = st.Add(duration).UTC()

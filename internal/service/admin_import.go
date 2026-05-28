@@ -18,7 +18,6 @@ import (
 	"worktimesync/pkg/auth"
 )
 
-// AdminImportService — bulk-импорт сотрудников из CSV.
 type AdminImportService struct {
 	pool *pgxpool.Pool
 }
@@ -27,21 +26,18 @@ func NewAdminImportService(pool *pgxpool.Pool) *AdminImportService {
 	return &AdminImportService{pool: pool}
 }
 
-// CreatedRow — успешно созданный сотрудник (с сгенерированным паролем).
 type CreatedRow struct {
 	Email    string `json:"email"`
 	FullName string `json:"full_name"`
 	Password string `json:"password"`
 }
 
-// SkippedRow — пропущенная (дубликат email).
 type SkippedRow struct {
 	Row    int    `json:"row"`
 	Email  string `json:"email"`
 	Reason string `json:"reason"`
 }
 
-// ErrorRow — строка с ошибкой парсинга/валидации.
 type ErrorRow struct {
 	Row int    `json:"row"`
 	Msg string `json:"msg"`
@@ -53,8 +49,6 @@ type ImportResult struct {
 	Errors  []ErrorRow   `json:"errors"`
 }
 
-// Ожидаемая шапка. Колонки можно переставлять, лишние игнорируем.
-// Обязательные: email, full_name.
 var supportedCols = map[string]bool{
 	"email":         true,
 	"full_name":     true,
@@ -65,13 +59,12 @@ var supportedCols = map[string]bool{
 	"manager_email": true,
 }
 
-// Import — парсит CSV из reader и создаёт сотрудников.
 func (s *AdminImportService) Import(ctx context.Context, r io.Reader) (ImportResult, error) {
 	res := ImportResult{Created: []CreatedRow{}, Skipped: []SkippedRow{}, Errors: []ErrorRow{}}
 
 	cr := csv.NewReader(r)
 	cr.TrimLeadingSpace = true
-	cr.FieldsPerRecord = -1 // допускаем разное число колонок (мы сами проверяем)
+	cr.FieldsPerRecord = -1
 
 	header, err := cr.Read()
 	if err != nil {
@@ -99,7 +92,7 @@ func (s *AdminImportService) Import(ctx context.Context, r io.Reader) (ImportRes
 		return strings.TrimSpace(row[i])
 	}
 
-	rowNum := 1 // header — это строка 1
+	rowNum := 1
 	for {
 		rowNum++
 		row, err := cr.Read()
@@ -118,7 +111,6 @@ func (s *AdminImportService) Import(ctx context.Context, r io.Reader) (ImportRes
 			continue
 		}
 
-		// Дубликат?
 		var existsID uuid.UUID
 		err = s.pool.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, email).Scan(&existsID)
 		if err == nil {
@@ -126,7 +118,6 @@ func (s *AdminImportService) Import(ctx context.Context, r io.Reader) (ImportRes
 			continue
 		}
 
-		// Готовим поля.
 		password := genPassword(12)
 		hash, err := auth.HashPassword(password)
 		if err != nil {
@@ -138,7 +129,6 @@ func (s *AdminImportService) Import(ctx context.Context, r io.Reader) (ImportRes
 			tz = "Europe/Moscow"
 		}
 
-		// Транзакция: users + employees + (опционально) manager_id.
 		tx, err := s.pool.Begin(ctx)
 		if err != nil {
 			res.Errors = append(res.Errors, ErrorRow{Row: rowNum, Msg: "tx begin: " + err.Error()})
@@ -157,7 +147,6 @@ func (s *AdminImportService) Import(ctx context.Context, r io.Reader) (ImportRes
 			continue
 		}
 
-		// manager_id, если manager_email задан и существует.
 		var managerEmpID *uuid.UUID
 		if me := strings.ToLower(get(row, "manager_email")); me != "" {
 			var mid uuid.UUID
@@ -172,7 +161,6 @@ func (s *AdminImportService) Import(ctx context.Context, r io.Reader) (ImportRes
 
 		var hireDate *time.Time
 		if hd := get(row, "hire_date"); hd != "" {
-			// поддерживаем форматы YYYY-MM-DD и DD.MM.YYYY
 			for _, layout := range []string{"2006-01-02", "02.01.2006"} {
 				if t, err := time.Parse(layout, hd); err == nil {
 					hireDate = &t
@@ -206,11 +194,9 @@ func (s *AdminImportService) Import(ctx context.Context, r io.Reader) (ImportRes
 	return res, nil
 }
 
-// genPassword — base64 от crypto/rand. Безопасный, удобочитаемый.
 func genPassword(byteLen int) string {
 	b := make([]byte, byteLen)
 	if _, err := rand.Read(b); err != nil {
-		// крайне маловероятно; падать не хотим — используем псевдо.
 		return fmt.Sprintf("Pass-%d", time.Now().UnixNano())
 	}
 	return strings.TrimRight(base64.URLEncoding.EncodeToString(b), "=")

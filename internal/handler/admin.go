@@ -13,31 +13,26 @@ import (
 	"worktimesync/internal/service"
 )
 
-// MetricsEnqueuer — минимальный интерфейс для admin-эндпоинта пересчёта.
-// Реальная реализация — *workers.Enqueuer. Описан здесь, чтобы handler не
-// зависел от пакета workers и его можно было замокать.
 type MetricsEnqueuer interface {
 	EnqueueMetricsRecompute(employeeID uuid.UUID) error
 }
 
 type AdminHandler struct {
 	svc      *service.AdminService
-	pool     *pgxpool.Pool   // для списка сотрудников при recompute-all
-	enqueuer MetricsEnqueuer // может быть nil — тогда endpoint вернёт 503
+	pool     *pgxpool.Pool
+	enqueuer MetricsEnqueuer
 }
 
 func NewAdminHandler(svc *service.AdminService) *AdminHandler {
 	return &AdminHandler{svc: svc}
 }
 
-// WithEnqueuer — DI: подключает Asynq enqueuer для admin-операций.
 func (h *AdminHandler) WithEnqueuer(pool *pgxpool.Pool, enq MetricsEnqueuer) *AdminHandler {
 	h.pool = pool
 	h.enqueuer = enq
 	return h
 }
 
-// Mount монтирует /api/v1/admin/* с middleware RequireRole(admin).
 func (h *AdminHandler) Mount(r fiber.Router) {
 	g := r.Group("/admin", middleware.RequireRole(domain.RoleAdmin))
 	g.Get("/users", h.listUsers)
@@ -50,9 +45,6 @@ func (h *AdminHandler) Mount(r fiber.Router) {
 	g.Post("/metrics/recompute-all", h.recomputeAllMetrics)
 }
 
-// recomputeAllMetrics — ставит каждому сотруднику metrics:recompute в очередь.
-// Используется чтобы прогреть metrics_snapshots (после миграции / при пустых
-// показателях на /analytics).
 func (h *AdminHandler) recomputeAllMetrics(c fiber.Ctx) error {
 	if h.enqueuer == nil || h.pool == nil {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "enqueuer not configured")
@@ -114,13 +106,10 @@ func (h *AdminHandler) updateRole(c fiber.Ctx) error {
 	return c.Status(fiber.StatusNoContent).Send(nil)
 }
 
-// updateEmailRequest — body для PATCH /admin/users/:id/email.
 type AdminUpdateEmailRequest struct {
 	Email string `json:"email"`
 }
 
-// updateEmail — админская смена почты любого пользователя.
-// 400 — кривой email, 409 — занят, 404 — нет пользователя.
 func (h *AdminHandler) updateEmail(c fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {

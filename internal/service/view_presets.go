@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ViewPresetsService — пользовательские пресеты фильтров для /analytics и /diagnostics.
 type ViewPresetsService struct {
 	pool *pgxpool.Pool
 }

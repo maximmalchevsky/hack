@@ -6,7 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Notification — уведомление пользователю.
 type Notification struct {
 	ID        uuid.UUID
 	UserID    uuid.UUID
@@ -14,7 +13,7 @@ type Notification struct {
 	Title     string
 	Body      string
 	Link      string
-	Payload   []byte // jsonb
+	Payload   []byte
 	ReadAt    *time.Time
 	CreatedAt time.Time
 }

@@ -1,6 +1,3 @@
-// Package service — WeeklySummaryService собирает компактный отчёт по неделе
-// конкретного сотрудника и опционально пропускает через GigaChat для красивого
-// текста. Используется на /dashboard сверху.
 package service
 
 import (
@@ -25,28 +22,27 @@ func NewWeeklySummaryService(pool *pgxpool.Pool, llm ai.Client) *WeeklySummarySe
 	return &WeeklySummaryService{pool: pool, llm: llm}
 }
 
-// WeeklySummary — данные + сгенерированный AI текст.
 type WeeklySummary struct {
-	WeekStart    time.Time      `json:"week_start"`
-	WeekEnd      time.Time      `json:"week_end"`
-	EventsTotal  int            `json:"events_total"`
-	HoursBusy    float64        `json:"hours_busy"`
-	HoursWork    float64        `json:"hours_work"`
-	BusyPercent  int            `json:"busy_percent"`
-	ByDay        []DayLoad      `json:"by_day"`
-	BusiestDay   string         `json:"busiest_day,omitempty"`
-	FreestDay    string         `json:"freest_day,omitempty"`
-	Conflicts    int            `json:"conflicts"`
+	WeekStart     time.Time     `json:"week_start"`
+	WeekEnd       time.Time     `json:"week_end"`
+	EventsTotal   int           `json:"events_total"`
+	HoursBusy     float64       `json:"hours_busy"`
+	HoursWork     float64       `json:"hours_work"`
+	BusyPercent   int           `json:"busy_percent"`
+	ByDay         []DayLoad     `json:"by_day"`
+	BusiestDay    string        `json:"busiest_day,omitempty"`
+	FreestDay     string        `json:"freest_day,omitempty"`
+	Conflicts     int           `json:"conflicts"`
 	NextException *ExceptionRef `json:"next_exception,omitempty"`
-	AIText       string         `json:"ai_text,omitempty"`     // markdown
-	GeneratedBy  string         `json:"generated_by"`          // ai | rule
+	AIText        string        `json:"ai_text,omitempty"`
+	GeneratedBy   string        `json:"generated_by"`
 }
 
 type DayLoad struct {
-	Day      string `json:"day"` // ПН..ВС
+	Day       string  `json:"day"`
 	HoursBusy float64 `json:"hours_busy"`
 	HoursWork float64 `json:"hours_work"`
-	Events    int    `json:"events"`
+	Events    int     `json:"events"`
 }
 
 type ExceptionRef struct {
@@ -55,7 +51,6 @@ type ExceptionRef struct {
 	EndAt   time.Time `json:"end_at"`
 }
 
-// Build — собирает сводку для пользователя на текущую неделю.
 func (s *WeeklySummaryService) Build(ctx context.Context, userID uuid.UUID) (*WeeklySummary, error) {
 	var (
 		empID    uuid.UUID
@@ -142,7 +137,6 @@ func (s *WeeklySummaryService) Build(ctx context.Context, userID uuid.UUID) (*We
 		}
 		totalBusy += busy
 		totalWork += w
-		// Busiest — день с максимумом busy среди рабочих дней.
 		if w > 0 {
 			if busiestIdx == -1 || busy > int(byDay[busiestIdx].HoursBusy*60) {
 				busiestIdx = i
@@ -164,7 +158,6 @@ func (s *WeeklySummaryService) Build(ctx context.Context, userID uuid.UUID) (*We
 			WHERE wp.employee_id = ce.employee_id AND wp.valid_to IS NULL
 		  )
 	`, empID, monday.UTC(), sunday.UTC()).Scan(&conflictsCount)
-	// Если профиль есть, точный counts через ConflictsService — оставим оценочный 0.
 
 	res := &WeeklySummary{
 		WeekStart:   monday,
@@ -186,7 +179,6 @@ func (s *WeeklySummaryService) Build(ctx context.Context, userID uuid.UUID) (*We
 		res.FreestDay = dayNames[freestIdx]
 	}
 
-	// Ближайшее исключение в течение 14 дней.
 	var nextEx ExceptionRef
 	err = s.pool.QueryRow(ctx, `
 		SELECT kind, start_at, end_at
@@ -201,7 +193,6 @@ func (s *WeeklySummaryService) Build(ctx context.Context, userID uuid.UUID) (*We
 		res.NextException = &nextEx
 	}
 
-	// AI-текст.
 	res.AIText = s.aiOrRuleText(ctx, fullName, res)
 	if s.llm != nil && strings.Contains(res.AIText, "[ai]") {
 		res.GeneratedBy = "ai"
@@ -211,14 +202,12 @@ func (s *WeeklySummaryService) Build(ctx context.Context, userID uuid.UUID) (*We
 	return res, nil
 }
 
-// aiOrRuleText — короткий парграф для UI. AI если есть, иначе шаблон.
 func (s *WeeklySummaryService) aiOrRuleText(ctx context.Context, name string, sm *WeeklySummary) string {
 	if s.llm != nil {
 		if t := s.tryAIText(ctx, name, sm); t != "" {
 			return "[ai]" + t
 		}
 	}
-	// Rule-based fallback — 2-3 предложения, конкретно.
 	var sb strings.Builder
 	hoursBusyStr := fmt.Sprintf("%.1f ч", sm.HoursBusy)
 	hoursWorkStr := fmt.Sprintf("%.1f ч", sm.HoursWork)
@@ -247,15 +236,15 @@ func (s *WeeklySummaryService) tryAIText(ctx context.Context, name string, sm *W
 		return ""
 	}
 	payload, _ := json.Marshal(map[string]any{
-		"name":         name,
-		"events_total": sm.EventsTotal,
-		"hours_busy":   sm.HoursBusy,
-		"hours_work":   sm.HoursWork,
-		"busy_percent": sm.BusyPercent,
-		"by_day":       sm.ByDay,
-		"busiest_day":  sm.BusiestDay,
-		"freest_day":   sm.FreestDay,
-		"conflicts":    sm.Conflicts,
+		"name":           name,
+		"events_total":   sm.EventsTotal,
+		"hours_busy":     sm.HoursBusy,
+		"hours_work":     sm.HoursWork,
+		"busy_percent":   sm.BusyPercent,
+		"by_day":         sm.ByDay,
+		"busiest_day":    sm.BusiestDay,
+		"freest_day":     sm.FreestDay,
+		"conflicts":      sm.Conflicts,
 		"next_exception": sm.NextException,
 	})
 	systemMsg := strings.Join([]string{

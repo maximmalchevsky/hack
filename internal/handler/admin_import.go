@@ -23,11 +23,9 @@ func (h *AdminImportHandler) Mount(r fiber.Router) {
 	g.Post("/users/import", h.importUsers)
 }
 
-// importUsers — принимает CSV как тело запроса (text/csv) или как файл в form-data поле "file".
 func (h *AdminImportHandler) importUsers(c fiber.Ctx) error {
 	var data []byte
 
-	// 1) multipart/form-data, поле "file"
 	if file, err := c.FormFile("file"); err == nil && file != nil {
 		f, err := file.Open()
 		if err != nil {
@@ -40,7 +38,7 @@ func (h *AdminImportHandler) importUsers(c fiber.Ctx) error {
 		}
 		data = buf.Bytes()
 	} else {
-		// 2) plain body (text/csv)
+
 		data = c.Body()
 	}
 

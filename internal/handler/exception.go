@@ -23,7 +23,6 @@ func NewExceptionHandler(svc *service.ExceptionService, enq *workers.Enqueuer) *
 	return &ExceptionHandler{svc: svc, enqueuer: enq}
 }
 
-// triggerRecompute — best-effort enqueue после create/delete исключения.
 func (h *ExceptionHandler) triggerRecompute(empID uuid.UUID) {
 	if h.enqueuer == nil || empID == uuid.Nil {
 		return
@@ -41,8 +40,6 @@ func (h *ExceptionHandler) Mount(r fiber.Router) {
 func (h *ExceptionHandler) list(c fiber.Ctx) error {
 	empID := middleware.EmployeeID(c)
 
-	// Если передан employee_id в query — используем его (для Manager/HR/Admin).
-	// В спринте 1 проверки прав упрощённые: разрешаем смотреть свои или того, кого знаешь.
 	if q := c.Query("employee_id"); q != "" {
 		parsed, err := uuid.Parse(q)
 		if err != nil {

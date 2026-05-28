@@ -20,9 +20,6 @@ func NewWebhookHandler(svc *service.WebhookService) *WebhookHandler {
 	return &WebhookHandler{svc: svc}
 }
 
-// Mount монтирует /api/v1/webhooks/:provider.
-// Webhook'и не требуют JWT-авторизации — провайдеры подписываются на стороне сервера,
-// валидация подписи происходит внутри сервиса.
 func (h *WebhookHandler) Mount(r fiber.Router) {
 	r.All("/webhooks/:provider", h.handle)
 }
@@ -33,10 +30,6 @@ func (h *WebhookHandler) handle(c fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "unknown provider")
 	}
 
-	// Конвертируем Fiber-контекст в стандартный http.Request для сервиса.
-	// Fiber v3 предоставляет c.Request() возвращающий fasthttp.Request,
-	// для нашего сервиса достаточно URL+headers+body — соберём заглушку через
-	// c.Request().URI().QueryArgs() и c.BodyRaw().
 	res, err := h.svc.Handle(c.Context(), provider, buildStdRequest(c))
 	if err != nil {
 		return err
@@ -48,14 +41,12 @@ func (h *WebhookHandler) handle(c fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusAccepted).JSON(fiber.Map{
-		"received":  true,
-		"inbox_id":  res.InboxID,
-		"provider":  res.Provider,
+		"received": true,
+		"inbox_id": res.InboxID,
+		"provider": res.Provider,
 	})
 }
 
-// buildStdRequest — конвертирует Fiber-контекст в стандартный *http.Request
-// для нужд WebhookService (он использует только URL.Query и Body).
 func buildStdRequest(c fiber.Ctx) *http.Request {
 	body := c.Body()
 	rawURL := string(c.Request().URI().FullURI())

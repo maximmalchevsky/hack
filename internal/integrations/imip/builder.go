@@ -1,10 +1,3 @@
-// Package imip — генератор iMIP-сообщений (iCalendar Message-Based
-// Interoperability Protocol, RFC 6047). Используется для рассылки .ics
-// инвайтов на встречу: Gmail/Apple Mail/Outlook автоматически распознают
-// прикреплённый .ics файл и показывают пользователю кнопки Accept/Decline.
-//
-// Этот файл — только построение .ics. Отправка через SMTP — в notify/email.go.
-// Парсинг ответов (METHOD:REPLY) — в imip/poller.go.
 package imip
 
 import (
@@ -14,37 +7,24 @@ import (
 	"github.com/google/uuid"
 )
 
-// Attendee — один участник встречи, которому уходит инвайт.
-// Required — email (как RSVP=TRUE) и Name (для CN= в .ics, чтобы клиент
-// показал «Иван Петров», а не «ivan@example.com»).
 type Attendee struct {
 	Email string
 	Name  string
 }
 
-// Invitation — входной параметр BuildInvitation.
 type Invitation struct {
-	MeetingID    uuid.UUID // используется как UID в VEVENT — по нему привязываются REPLY
-	Title        string
-	Description  string
-	StartAt      time.Time
-	EndAt        time.Time
-	OrganizerEmail string // адрес тех. ящика (IMIP_REPLY_TO); REPLY придёт сюда
-	OrganizerName  string // отображаемое имя инициатора (его реальное ФИО)
+	MeetingID      uuid.UUID
+	Title          string
+	Description    string
+	StartAt        time.Time
+	EndAt          time.Time
+	OrganizerEmail string
+	OrganizerName  string
 	Attendees      []Attendee
-	// Sequence — счётчик ревизий встречи. 0 для новой, +1 при каждом UPDATE.
-	// Без него Gmail/Outlook будут считать второе письмо «копией» первого.
-	Sequence int
-	// Method — REQUEST (новая/обновление) или CANCEL (отмена). Пусто = REQUEST.
-	Method string
+	Sequence       int
+	Method         string
 }
 
-// BuildInvitation возвращает текст .ics-файла, готовый к вставке в text/calendar
-// часть multipart-письма. Возвращает строку (не []byte), чтобы было удобно
-// записывать в SMTP DATA.
-//
-// VEVENT.UID = MeetingID.String() — это ключ, по которому потом IMAP-poller
-// найдёт meeting_proposals.id при разборе REPLY.
 func BuildInvitation(in Invitation) string {
 	cal := ics.NewCalendar()
 	cal.SetProductId("-//Workie//ru//RU")
@@ -75,17 +55,12 @@ func BuildInvitation(in Invitation) string {
 		ev.SetStatus(ics.ObjectStatusConfirmed)
 	}
 
-	// ORGANIZER — наш технический ящик. Сюда Gmail/Apple отправят REPLY.
-	// CN= — реальное ФИО инициатора, чтобы клиент показал «Игорь Климов»
-	// вместо технического email'а.
 	organizerOpts := []ics.PropertyParameter{}
 	if in.OrganizerName != "" {
 		organizerOpts = append(organizerOpts, ics.WithCN(in.OrganizerName))
 	}
 	ev.SetOrganizer(in.OrganizerEmail, organizerOpts...)
 
-	// Каждый участник — ATTENDEE с RSVP=TRUE, чтобы клиент знал, что ожидается
-	// ответ. PARTSTAT=NEEDS-ACTION — стандартное начальное состояние.
 	for _, a := range in.Attendees {
 		if a.Email == "" {
 			continue

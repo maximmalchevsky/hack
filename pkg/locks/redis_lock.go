@@ -1,8 +1,3 @@
-// Package locks — distributed lock через Redis SETNX + TTL.
-//
-// Используется для предотвращения параллельного запуска тяжёлых задач
-// (например, recompute метрик для одного employee или sync одной интеграции),
-// когда несколько worker'ов в кластере могут одновременно поднять одинаковый job.
 package locks
 
 import (
@@ -15,21 +10,14 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// ErrLocked — лок уже захвачен другим процессом.
 var ErrLocked = errors.New("locks: already locked")
 
-// Manager — обёртка над Redis для управления локами.
 type Manager struct {
 	rdb *redis.Client
 }
 
 func NewManager(rdb *redis.Client) *Manager { return &Manager{rdb: rdb} }
 
-// Lock — попытка захватить лок. Возвращает release-функцию или ErrLocked.
-//
-// release безопасно вызывать несколько раз: при повторных вызовах будет no-op.
-// release использует Lua-скрипт для атомарного "удалить если значение совпадает",
-// чтобы случайно не снять чужой лок, если наш TTL истёк.
 func (m *Manager) Lock(ctx context.Context, key string, ttl time.Duration) (release func(), err error) {
 	token, err := randomToken()
 	if err != nil {
@@ -58,8 +46,6 @@ func (m *Manager) Lock(ctx context.Context, key string, ttl time.Duration) (rele
 	}, nil
 }
 
-// TryLockOrSkip — обёртка для типичного use-case: "если не залочено — выполнить fn, иначе пропустить".
-// Возвращает true если fn был выполнен, false если был skip из-за активного лока.
 func (m *Manager) TryLockOrSkip(ctx context.Context, key string, ttl time.Duration, fn func(ctx context.Context) error) (bool, error) {
 	release, err := m.Lock(ctx, key, ttl)
 	if err != nil {

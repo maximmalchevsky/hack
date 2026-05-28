@@ -12,17 +12,16 @@ import (
 	"worktimesync/internal/repository"
 )
 
-// ConflictRow — событие, попадающее в категорию «вне графика» либо «в выходной» либо «в исключении».
 type ConflictRow struct {
-	EmployeeID uuid.UUID         `json:"employee_id"`
-	FullName   string            `json:"full_name"`
-	Department string            `json:"department,omitempty"`
-	EventID    uuid.UUID         `json:"event_id"`
-	Title      string            `json:"title"`
-	StartAt    time.Time         `json:"start_at"`
-	EndAt      time.Time         `json:"end_at"`
-	Reason     string            `json:"reason"` // outside_hours | weekend | within_exception
-	Severity   string            `json:"severity"` // low | medium | high
+	EmployeeID uuid.UUID `json:"employee_id"`
+	FullName   string    `json:"full_name"`
+	Department string    `json:"department,omitempty"`
+	EventID    uuid.UUID `json:"event_id"`
+	Title      string    `json:"title"`
+	StartAt    time.Time `json:"start_at"`
+	EndAt      time.Time `json:"end_at"`
+	Reason     string    `json:"reason"`
+	Severity   string    `json:"severity"`
 }
 
 type ConflictsService struct {
@@ -41,11 +40,6 @@ func NewConflictsService(pool *pgxpool.Pool) *ConflictsService {
 	}
 }
 
-// ListAll — все конфликты по всем сотрудникам за окно [from, to].
-// На дне 6 — простая реализация: один проход по всем employees, для каждого
-// собираем события и сравниваем с активным профилем.
-//
-// В production это вынесем в Materialized View (день 8) или в фоновый Asynq job.
 func (s *ConflictsService) ListAll(ctx context.Context, from, to time.Time, limit int) ([]ConflictRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
@@ -116,7 +110,6 @@ func (s *ConflictsService) ListAll(ctx context.Context, from, to time.Time, limi
 	}
 
 	sort.Slice(conflicts, func(i, j int) bool {
-		// сначала high → low → medium
 		order := map[string]int{"high": 0, "medium": 1, "low": 2}
 		if order[conflicts[i].Severity] != order[conflicts[j].Severity] {
 			return order[conflicts[i].Severity] < order[conflicts[j].Severity]
@@ -126,7 +119,6 @@ func (s *ConflictsService) ListAll(ctx context.Context, from, to time.Time, limi
 	return conflicts, nil
 }
 
-// ListByEmployee — конфликты только для одного сотрудника.
 func (s *ConflictsService) ListByEmployee(ctx context.Context, empID uuid.UUID, from, to time.Time) ([]ConflictRow, error) {
 	if from.IsZero() {
 		from = time.Now().UTC().AddDate(0, 0, -7)
@@ -175,10 +167,7 @@ func (s *ConflictsService) ListByEmployee(ctx context.Context, empID uuid.UUID, 
 	return out, nil
 }
 
-// classifyConflict — почему событие конфликтное и насколько серьёзно.
 func classifyConflict(ev domain.CalendarEvent, profile *domain.WorkProfile, excs []domain.TimeException) (string, string) {
-	// Внутри исключения — это не конфликт сам по себе, но если в отпуск
-	// запланирована встреча — это сигнал.
 	if eventInExc(ev.StartAt, ev.EndAt, excs) {
 		return "within_exception", "medium"
 	}
@@ -234,7 +223,6 @@ func classifyConflict(ev domain.CalendarEvent, profile *domain.WorkProfile, excs
 	workStart := time.Date(s.Year(), s.Month(), s.Day(), ws.Hour(), ws.Minute(), 0, 0, loc)
 	workEnd := time.Date(s.Year(), s.Month(), s.Day(), we.Hour(), we.Minute(), 0, 0, loc)
 	if s.Before(workStart) || e.After(workEnd) {
-		// насколько сильно вышло за пределы
 		gapBefore := workStart.Sub(s)
 		gapAfter := e.Sub(workEnd)
 		sev := "low"

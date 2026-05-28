@@ -18,40 +18,29 @@ import (
 	"github.com/google/uuid"
 )
 
-// readErrorBody — читает тело ответа GigaChat при не-2xx (макс 512 байт),
-// чтобы сложить в ошибку понятную причину («insufficient balance», «scope is not
-// available for this client», «model not found», etc). GigaChat по факту
-// возвращает JSON {"message":"…"} либо {"status":...,"message":"…"}.
 func readErrorBody(resp *http.Response) string {
 	if resp == nil || resp.Body == nil {
 		return ""
 	}
 	const max = 512
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, max))
-	// Сжимаем многострочный JSON в одну строку, чтобы не ломать логи.
 	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(string(b), "\n", " "), "\r", ""))
 }
 
-// OAuth-endpoint GigaChat (ngw.devices.sberbank.ru:9443) выписан корневым
-// сертификатом Минцифры РФ, не входящим в системный root pool. Chat endpoint
-// уже на стандартном CA, но без OAuth токен не получить.
-//
 //go:embed certs/russian_trusted_root_ca.pem
 var russianRootCA []byte
 
-const gigachatModel = "GigaChat" // "GigaChat" | "GigaChat-Pro" | "GigaChat-Max"
+const gigachatModel = "GigaChat"
 
-// GigaChatConfig — конфигурация клиента.
 type GigaChatConfig struct {
 	ClientID     string
 	ClientSecret string
 	Scope        string
-	APIURL       string // base URL: https://gigachat.devices.sberbank.ru/api/v1
-	OAuthURL     string // https://ngw.devices.sberbank.ru:9443/api/v2/oauth
+	APIURL       string
+	OAuthURL     string
 	Model        string
 }
 
-// GigaChat — клиент Sber GigaChat. Реализует Client interface.
 type GigaChat struct {
 	cfg        GigaChatConfig
 	httpClient *http.Client
@@ -94,8 +83,6 @@ func NewGigaChat(cfg GigaChatConfig) (*GigaChat, error) {
 
 func (g *GigaChat) Name() string { return "gigachat" }
 
-// ensureToken гарантирует, что access_token актуален. Token живёт ~30 минут,
-// обновляем за 1 минуту до истечения.
 func (g *GigaChat) ensureToken(ctx context.Context) error {
 	g.tokenMu.RLock()
 	if g.accessToken != "" && time.Until(g.expiresAt) > time.Minute {
@@ -107,7 +94,6 @@ func (g *GigaChat) ensureToken(ctx context.Context) error {
 	g.tokenMu.Lock()
 	defer g.tokenMu.Unlock()
 
-	// Double-check после получения write-lock.
 	if g.accessToken != "" && time.Until(g.expiresAt) > time.Minute {
 		return nil
 	}
@@ -115,10 +101,6 @@ func (g *GigaChat) ensureToken(ctx context.Context) error {
 	return g.refreshToken(ctx)
 }
 
-// refreshToken запрашивает новый access_token.
-// POST {OAuthURL}
-// Headers: Authorization: Basic base64(client_id:client_secret), RqUID: <uuid>, Content-Type: application/x-www-form-urlencoded
-// Body:    scope=GIGACHAT_API_PERS
 func (g *GigaChat) refreshToken(ctx context.Context) error {
 	if g.cfg.ClientID == "" || g.cfg.ClientSecret == "" {
 		return fmt.Errorf("gigachat: client_id/client_secret not configured")
@@ -152,7 +134,7 @@ func (g *GigaChat) refreshToken(ctx context.Context) error {
 
 	var out struct {
 		AccessToken string `json:"access_token"`
-		ExpiresAt   int64  `json:"expires_at"` // unix-ms
+		ExpiresAt   int64  `json:"expires_at"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return fmt.Errorf("gigachat: decode oauth response: %w", err)
@@ -167,7 +149,6 @@ func (g *GigaChat) refreshToken(ctx context.Context) error {
 	return nil
 }
 
-// Complete — однократный запрос на чат-комплишен.
 func (g *GigaChat) Complete(ctx context.Context, req CompletionRequest) (*CompletionResponse, error) {
 	if err := g.ensureToken(ctx); err != nil {
 		return nil, err
@@ -220,7 +201,6 @@ func (g *GigaChat) Complete(ctx context.Context, req CompletionRequest) (*Comple
 
 	switch resp.StatusCode {
 	case http.StatusOK:
-		// ok
 	case http.StatusUnauthorized:
 		return nil, fmt.Errorf("%w: %s", ErrUnauthorized, readErrorBody(resp))
 	case http.StatusTooManyRequests:
@@ -260,14 +240,6 @@ func (g *GigaChat) Complete(ctx context.Context, req CompletionRequest) (*Comple
 	}, nil
 }
 
-// Stream — потоковый chat.completions. Возвращает канал StreamChunk;
-// последний чанк всегда Done=true (с возможным Err при сбое).
-//
-// GigaChat SSE-формат:
-//
-//	data: {"choices":[{"delta":{"content":"..."},"index":0,"finish_reason":null}]}
-//	data: {"choices":[{"delta":{"content":""},"index":0,"finish_reason":"stop"}]}
-//	data: [DONE]
 func (g *GigaChat) Stream(ctx context.Context, req StreamRequest) (<-chan StreamChunk, error) {
 	if err := g.ensureToken(ctx); err != nil {
 		return nil, err
@@ -319,7 +291,6 @@ func (g *GigaChat) Stream(ctx context.Context, req StreamRequest) (<-chan Stream
 
 	switch resp.StatusCode {
 	case http.StatusOK:
-		// ok
 	case http.StatusUnauthorized:
 		errMsg := readErrorBody(resp)
 		resp.Body.Close()
@@ -345,7 +316,6 @@ func (g *GigaChat) Stream(ctx context.Context, req StreamRequest) (<-chan Stream
 		defer close(out)
 
 		scanner := bufio.NewScanner(resp.Body)
-		// SSE-строка может быть длинной — поднимаем буфер до 1 МБ.
 		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 		for scanner.Scan() {
@@ -377,7 +347,6 @@ func (g *GigaChat) Stream(ctx context.Context, req StreamRequest) (<-chan Stream
 				} `json:"choices"`
 			}
 			if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-				// одиночный поломанный кусок не валим стрим, продолжаем
 				continue
 			}
 			if len(chunk.Choices) == 0 {
@@ -406,7 +375,6 @@ func (g *GigaChat) Stream(ctx context.Context, req StreamRequest) (<-chan Stream
 			}
 			return
 		}
-		// поток закончился без [DONE]
 		select {
 		case out <- StreamChunk{Done: true}:
 		case <-ctx.Done():

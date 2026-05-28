@@ -9,7 +9,6 @@ import (
 	"worktimesync/internal/service"
 )
 
-// AuthHandler — Fiber-обработчики для /api/v1/auth.
 type AuthHandler struct {
 	svc *service.AuthService
 }
@@ -18,7 +17,6 @@ func NewAuthHandler(svc *service.AuthService) *AuthHandler {
 	return &AuthHandler{svc: svc}
 }
 
-// Register регистрирует роуты в группе.
 func (h *AuthHandler) Register(r fiber.Router) {
 	r.Post("/register", h.register)
 	r.Post("/login", h.login)
@@ -84,7 +82,6 @@ func (h *AuthHandler) refresh(c fiber.Ctx) error {
 	return c.JSON(TokenPairResponse{Access: pair.Access, Refresh: pair.Refresh})
 }
 
-// mapServiceErr — переводит доменные ошибки в HTTP-коды.
 func mapServiceErr(err error) error {
 	switch {
 	case errors.Is(err, service.ErrInvalidCredentials):

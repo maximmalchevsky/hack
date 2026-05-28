@@ -13,7 +13,6 @@ import (
 	"worktimesync/internal/repository"
 )
 
-// EmployeeService — операции с сотрудниками: список, детальная карточка.
 type EmployeeService struct {
 	pool     *pgxpool.Pool
 	users    *repository.UserRepo
@@ -36,7 +35,6 @@ func NewEmployeeService(pool *pgxpool.Pool) *EmployeeService {
 	}
 }
 
-// EmployeeListRow — компактная запись для списка.
 type EmployeeListRow struct {
 	EmployeeID          uuid.UUID  `json:"employee_id"`
 	UserID              uuid.UUID  `json:"user_id"`
@@ -50,16 +48,14 @@ type EmployeeListRow struct {
 	LastProfileUpdateAt *time.Time `json:"last_profile_update_at,omitempty"`
 }
 
-// EmployeeDetail — расширенная карточка.
 type EmployeeDetail struct {
-	Employee     EmployeeListRow             `json:"employee"`
-	WorkProfile  *domain.WorkProfile         `json:"work_profile,omitempty"`
-	Exceptions   []domain.TimeException      `json:"exceptions"`
-	Integrations []IntegrationListRow        `json:"integrations"`
-	UpcomingEvts int                         `json:"upcoming_events_count"`
+	Employee     EmployeeListRow        `json:"employee"`
+	WorkProfile  *domain.WorkProfile    `json:"work_profile,omitempty"`
+	Exceptions   []domain.TimeException `json:"exceptions"`
+	Integrations []IntegrationListRow   `json:"integrations"`
+	UpcomingEvts int                    `json:"upcoming_events_count"`
 }
 
-// IntegrationListRow — публичная форма интеграции для UI (без секретов).
 type IntegrationListRow struct {
 	ID           uuid.UUID  `json:"id"`
 	Provider     string     `json:"provider"`
@@ -165,5 +161,4 @@ func (s *EmployeeService) Detail(ctx context.Context, employeeID uuid.UUID) (*Em
 	return detail, nil
 }
 
-// ErrEmployeeNotFound — отдельная ошибка.
 var ErrEmployeeNotFound = errors.New("employee not found")

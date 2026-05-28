@@ -6,28 +6,21 @@ import (
 	"strings"
 )
 
-// TaskEstimateInput — что отдаём модели для оценки одной задачи.
-// Description можно укоротить — для оценки достаточно первых ~500 символов.
 type TaskEstimateInput struct {
 	Title       string
 	Description string
-	Type        string // Story/Task/Bug/...
-	Priority    string // highest/high/medium/low/lowest
+	Type        string
+	Priority    string
 }
 
-// TaskEstimate — что возвращает оценщик. Confidence ∈ [0..1].
-// Если LLM вернул мусор — возвращаем zero и оценщик считает что не смог.
 type TaskEstimate struct {
 	Hours      float64 `json:"hours"`
 	MinHours   float64 `json:"min"`
 	MaxHours   float64 `json:"max"`
 	Confidence float64 `json:"confidence"`
-	// Source = "ai" или "fallback". Зависит, отвечала ли модель валидным JSON.
-	Source string `json:"-"`
+	Source     string  `json:"-"`
 }
 
-// TaskEstimator — оборачивает ai.Client промптом «оцени часы на задачу».
-// Используется TaskPlannerService для задач без estimated_hours.
 type TaskEstimator struct {
 	llm Client
 }
@@ -36,8 +29,6 @@ func NewTaskEstimator(llm Client) *TaskEstimator {
 	return &TaskEstimator{llm: llm}
 }
 
-// Estimate — синхронный вызов GigaChat. Возвращает (estimate, ok). Если ok=false
-// — модель недоступна или ответ кривой; вызывающий должен использовать default.
 func (e *TaskEstimator) Estimate(ctx context.Context, in TaskEstimateInput) (TaskEstimate, bool) {
 	if e == nil || e.llm == nil {
 		return TaskEstimate{}, false
@@ -95,7 +86,6 @@ func (e *TaskEstimator) Estimate(ctx context.Context, in TaskEstimateInput) (Tas
 	if out.Hours <= 0 {
 		return TaskEstimate{}, false
 	}
-	// Защита от шизы: ограничим разумным диапазоном (0.25ч — 200ч).
 	if out.Hours < 0.25 {
 		out.Hours = 0.25
 	}

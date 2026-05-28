@@ -11,10 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ChatContextBuilder — собирает компактный snapshot системы для подмешивания
-// в системный промпт чата. Без этого LLM отвечает абстрактно ("проверьте
-// сотрудников с A < 0.8"), с этим — конкретно ("у Сергея Сидорова A=0.34,
-// не обновлял 142 дня").
 type ChatContextBuilder struct {
 	pool        *pgxpool.Pool
 	diagnostics *DiagnosticsService
@@ -36,8 +32,6 @@ func NewChatContextBuilder(
 	}
 }
 
-// Build — markdown-snapshot системы под текущего пользователя.
-// Возвращает строку, готовую к подстановке в system message.
 func (b *ChatContextBuilder) Build(ctx context.Context, userID uuid.UUID) (string, error) {
 	now := time.Now().UTC()
 
@@ -71,7 +65,6 @@ func (b *ChatContextBuilder) Build(ctx context.Context, userID uuid.UUID) (strin
 	fmt.Fprintf(&sb, "- Без данных: %d\n", len(groups.Unknown))
 	sb.WriteString("\n")
 
-	// Топ-устаревших — самое важное для большинства вопросов.
 	if len(groups.Stale) > 0 {
 		sb.WriteString("### Устаревшие профили (имена, дни без обновления, A)\n")
 		for i, r := range groups.Stale {
@@ -121,14 +114,10 @@ func (b *ChatContextBuilder) Build(ctx context.Context, userID uuid.UUID) (strin
 		sb.WriteString("\n")
 	}
 
-	// Моя загрузка по дням текущей недели — точные часы вместо галлюцинаций AI.
 	b.appendMyWeekLoad(ctx, &sb, userID, now)
 
-	// Текущие и будущие исключения: отпуска, больничные, командировки, личные часы.
 	b.appendExceptions(ctx, &sb, now)
 
-	// Свободные окна для каждой команды (60-минутные, ближайшие 7 дней).
-	// Без этого AI на вопрос «когда собрать команду?» отвечает абстрактно.
 	if b.teams != nil {
 		b.appendTeamWindows(ctx, &sb, user.Timezone)
 	}
@@ -142,16 +131,7 @@ func (b *ChatContextBuilder) Build(ctx context.Context, userID uuid.UUID) (strin
 	return sb.String(), nil
 }
 
-// appendMyWeekLoad — рассказывает AI ТОЧНУЮ загрузку текущего пользователя по
-// дням этой недели (ПН-ВС) и общую сумму. Без этой секции на вопрос «какая у
-// меня загруженность в пятницу» AI просто галлюцинирует цифры.
-//
-// Считает в локальной TZ пользователя:
-//   - рабочие часы дня по активному work_profile (days_of_week JSON: {"mon": {"start":"09:00","end":"18:00"}, …})
-//   - сумму длительностей событий, попадающих в этот день
-//   - процент = busy / work_hours
 func (b *ChatContextBuilder) appendMyWeekLoad(ctx context.Context, sb *strings.Builder, userID uuid.UUID, now time.Time) {
-	// Сначала employee_id и tz юзера + work_profile.
 	var (
 		empID    uuid.UUID
 		tzName   string
@@ -166,23 +146,21 @@ func (b *ChatContextBuilder) appendMyWeekLoad(ctx context.Context, sb *strings.B
 		WHERE u.id = $1
 	`, userID).Scan(&empID, &tzName, &daysJSON)
 	if err != nil {
-		return // тихо: для admin без employee пропускаем
+		return
 	}
 	loc, _ := time.LoadLocation(tzName)
 	if loc == nil {
 		loc = time.UTC
 	}
 
-	// monday локальной недели.
 	nLocal := now.In(loc)
 	wd := int(nLocal.Weekday())
 	if wd == 0 {
-		wd = 7 // sunday → 7
+		wd = 7
 	}
 	monday := time.Date(nLocal.Year(), nLocal.Month(), nLocal.Day()-(wd-1), 0, 0, 0, 0, loc)
 	sunday := monday.AddDate(0, 0, 7)
 
-	// События недели в UTC, потом отображаем в локали.
 	rows, err := b.pool.Query(ctx, `
 		SELECT title, start_at, end_at
 		FROM calendar_events
@@ -198,9 +176,9 @@ func (b *ChatContextBuilder) appendMyWeekLoad(ctx context.Context, sb *strings.B
 	defer rows.Close()
 
 	type ev struct {
-		title    string
-		start    time.Time
-		end      time.Time
+		title string
+		start time.Time
+		end   time.Time
 	}
 	dayEvents := make([][]ev, 7)
 	for rows.Next() {
@@ -216,14 +194,12 @@ func (b *ChatContextBuilder) appendMyWeekLoad(ctx context.Context, sb *strings.B
 		dayEvents[idx] = append(dayEvents[idx], e)
 	}
 
-	// Рабочие часы по дням из work_profile.
 	workMinutes := parseWorkMinutes(daysJSON)
 
 	dayNames := []string{"ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"}
 	keys := []string{"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 	todayIdx := -1
 	{
-		// 0..6 — индекс сегодня внутри текущей недели
 		today := time.Date(nLocal.Year(), nLocal.Month(), nLocal.Day(), 0, 0, 0, 0, loc)
 		todayIdx = int(today.Sub(monday).Hours() / 24)
 	}
@@ -253,7 +229,6 @@ func (b *ChatContextBuilder) appendMyWeekLoad(ctx context.Context, sb *strings.B
 		totalBusy += busyMin
 		totalWork += workMin
 
-		// Если рабочих часов нет (выходной), процент бессмыслен.
 		pct := "—"
 		if workMin > 0 {
 			pct = fmt.Sprintf("%.0f%%", 100.0*float64(busyMin)/float64(workMin))
@@ -271,7 +246,6 @@ func (b *ChatContextBuilder) appendMyWeekLoad(ctx context.Context, sb *strings.B
 			dayNames[i], marker, date.Format("02.01"),
 			fmtMins(workMin), fmtMins(busyMin), pct, evList)
 	}
-	// Итог
 	totalPct := "—"
 	if totalWork > 0 {
 		totalPct = fmt.Sprintf("%.0f%%", 100.0*float64(totalBusy)/float64(totalWork))
@@ -280,7 +254,6 @@ func (b *ChatContextBuilder) appendMyWeekLoad(ctx context.Context, sb *strings.B
 		fmtMins(totalBusy), fmtMins(totalWork), totalPct)
 }
 
-// fmtMins — «6 ч 30 мин» / «45 мин» / «8 ч».
 func fmtMins(m int) string {
 	if m <= 0 {
 		return "0"
@@ -303,8 +276,6 @@ func fmtDateRange(from, to time.Time) string {
 	)
 }
 
-// parseWorkMinutes — из JSON `{"mon":{"start":"09:00","end":"18:00"}, …}` считает
-// число рабочих минут по дням недели.
 func parseWorkMinutes(raw []byte) map[string]int {
 	out := map[string]int{
 		"mon": 0, "tue": 0, "wed": 0, "thu": 0, "fri": 0, "sat": 0, "sun": 0,
@@ -312,7 +283,6 @@ func parseWorkMinutes(raw []byte) map[string]int {
 	if len(raw) == 0 {
 		return out
 	}
-	// Лёгкий парсинг без отдельной структуры, чтобы не плодить domain-зависимости.
 	var parsed map[string]struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
@@ -369,9 +339,6 @@ func parseInt(s string) (int, error) {
 	return n, nil
 }
 
-// appendExceptions — текущие и будущие исключения (отпуска, больничные,
-// командировки, личные часы) для всех сотрудников за ±30 дней от now.
-// Без этой секции AI на вопрос «у кого командировки/отпуск?» уходит в «нет данных».
 func (b *ChatContextBuilder) appendExceptions(ctx context.Context, sb *strings.Builder, now time.Time) {
 	from := now.AddDate(0, 0, -30)
 	to := now.AddDate(0, 0, 60)
@@ -393,7 +360,6 @@ func (b *ChatContextBuilder) appendExceptions(ctx context.Context, sb *strings.B
 		kind, fullName, comment string
 		start, end              time.Time
 	}
-	// Группируем по виду — так AI проще ответить «по командировкам» / «по отпускам».
 	byKind := map[string][]item{}
 	for rows.Next() {
 		var it item
@@ -406,7 +372,6 @@ func (b *ChatContextBuilder) appendExceptions(ctx context.Context, sb *strings.B
 		return
 	}
 
-	// Порядок секций — сначала самое срочное.
 	order := []string{"vacation", "sick_leave", "business_trip", "personal_hours", "custom"}
 	titles := map[string]string{
 		"vacation":       "Отпуска",
@@ -454,9 +419,6 @@ func (b *ChatContextBuilder) appendExceptions(ctx context.Context, sb *strings.B
 	}
 }
 
-// appendTeamWindows — для каждой команды считает топ-3 окна 60 мин на 7 дней
-// и пишет в контекст. Если поиск падает — секция пропускается, ошибку наверх
-// не отдаём (это лучший контекст, не критичный путь).
 func (b *ChatContextBuilder) appendTeamWindows(ctx context.Context, sb *strings.Builder, viewerTZ string) {
 	rows, err := b.pool.Query(ctx, `SELECT id, name FROM teams ORDER BY name`)
 	if err != nil {
@@ -479,7 +441,6 @@ func (b *ChatContextBuilder) appendTeamWindows(ctx context.Context, sb *strings.
 		return
 	}
 
-	// Локаль зрителя для рендеринга времени — чтобы AI говорил «10:30», а не «07:30 UTC».
 	loc, locErr := time.LoadLocation(viewerTZ)
 	if locErr != nil || loc == nil {
 		loc = time.UTC
@@ -575,8 +536,6 @@ func tzSuffix(tz string) string {
 	return ", TZ " + tz
 }
 
-// shortTZName — городская часть IANA-имени, чтобы AI говорил «время в Moscow»,
-// а не «время в Europe/Moscow».
 func shortTZName(tz string) string {
 	if tz == "" {
 		return "UTC"

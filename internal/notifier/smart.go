@@ -1,11 +1,3 @@
-// Package notifier — фабрика уведомлений с приоритетами.
-//
-// Базовый путь — rule-based: берёт HR-Roadmap-items с priority >= high
-// и пушит каждому получателю (сам сотрудник + руководитель + HR).
-//
-// AI-усиление (опционально, если передан ai.Client): на этапе сборки
-// текста уведомления просит GigaChat сгенерировать короткий персональный
-// title + body. На любую ошибку — fall-back на rule-based.
 package notifier
 
 import (
@@ -51,11 +43,6 @@ func NewSmartNotifier(
 	}
 }
 
-// Run — один проход. Возвращает количество отправленных уведомлений.
-//
-// Использование:
-//   - Asynq scheduler запускает задачу `notifications:send` раз в час.
-//   - Handler Asynq вызывает Run и логирует результат.
 func (n *SmartNotifier) Run(ctx context.Context) (int, error) {
 	items, err := n.hrRoadmap.Build(ctx, 50)
 	if err != nil {
@@ -68,18 +55,15 @@ func (n *SmartNotifier) Run(ctx context.Context) (int, error) {
 			continue
 		}
 
-		// Определяем получателя: HR + руководитель + сам сотрудник.
 		recipients, err := n.recipientsFor(ctx, it.EmployeeID)
 		if err != nil {
 			n.log.Warn().Err(err).Str("employee", it.FullName).Msg("smart-notifier: recipients lookup failed")
 			continue
 		}
 
-		// Один AI-вызов на сотрудника — текст одинаков для всех получателей.
 		title, body := n.composeText(ctx, it)
 
 		for _, userID := range recipients {
-			// Дедуп: не слать повторно тот же kind+subject за последние 24ч.
 			alreadySent, err := n.alreadySentRecently(ctx, userID, "stale_profile", it.EmployeeID)
 			if err != nil {
 				continue
@@ -95,10 +79,10 @@ func (n *SmartNotifier) Run(ctx context.Context) (int, error) {
 				Body:   body,
 				Link:   "/employees/" + it.EmployeeID.String(),
 				Payload: map[string]any{
-					"subject_id":    it.EmployeeID.String(),
-					"priority":      it.Priority,
-					"action":        it.Action,
-					"days_since":    it.DaysSinceUpdate,
+					"subject_id": it.EmployeeID.String(),
+					"priority":   it.Priority,
+					"action":     it.Action,
+					"days_since": it.DaysSinceUpdate,
 				},
 			})
 			if err != nil {
@@ -111,12 +95,9 @@ func (n *SmartNotifier) Run(ctx context.Context) (int, error) {
 	return sent, nil
 }
 
-// recipientsFor — кому слать уведомление о сотруднике с устаревшим графиком.
-// Стратегия: сам сотрудник + его руководитель + все HR.
 func (n *SmartNotifier) recipientsFor(ctx context.Context, employeeID uuid.UUID) ([]uuid.UUID, error) {
 	var out []uuid.UUID
 
-	// 1. Сам сотрудник.
 	var selfUserID uuid.UUID
 	if err := n.pool.QueryRow(ctx, `
 		SELECT user_id FROM employees WHERE id = $1
@@ -124,7 +105,6 @@ func (n *SmartNotifier) recipientsFor(ctx context.Context, employeeID uuid.UUID)
 		out = append(out, selfUserID)
 	}
 
-	// 2. Его руководитель (если задан).
 	var managerEmployeeID *uuid.UUID
 	_ = n.pool.QueryRow(ctx, `
 		SELECT manager_id FROM employees WHERE id = $1
@@ -138,7 +118,6 @@ func (n *SmartNotifier) recipientsFor(ctx context.Context, employeeID uuid.UUID)
 		}
 	}
 
-	// 3. Все HR.
 	rows, err := n.pool.Query(ctx, `
 		SELECT id FROM users WHERE role = 'hr'
 	`)
@@ -170,8 +149,6 @@ func (n *SmartNotifier) alreadySentRecently(ctx context.Context, userID uuid.UUI
 	return count > 0, nil
 }
 
-// composeText — заголовок и тело уведомления. Если есть LLM, просит модель
-// написать короткий персональный текст (~140 символов в body), иначе — rule-based.
 func (n *SmartNotifier) composeText(ctx context.Context, it service.HRRoadmapItem) (string, string) {
 	if n.llm != nil {
 		if t, b, err := n.aiCompose(ctx, it); err == nil && t != "" && b != "" {
@@ -211,8 +188,6 @@ func (n *SmartNotifier) aiCompose(ctx context.Context, it service.HRRoadmapItem)
 		return "", "", fmt.Errorf("empty response")
 	}
 	clean := stripFence(resp.Content)
-	// Промпт просит JSON с массивом, но для одного кандидата можем получить и
-	// просто {"title": "...", "body": "..."} — обрабатываем оба варианта.
 	var single struct {
 		Title string `json:"title"`
 		Body  string `json:"body"`

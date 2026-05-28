@@ -29,7 +29,7 @@ type CreateIntegrationInput struct {
 	AccessTokenEnc  string
 	RefreshTokenEnc string
 	ExpiresAt       *time.Time
-	ConfigJSON      []byte // optional
+	ConfigJSON      []byte
 }
 
 func (r *IntegrationRepo) Create(ctx context.Context, in CreateIntegrationInput) (*domain.Integration, error) {
@@ -94,7 +94,6 @@ func (r *IntegrationRepo) ListByEmployee(ctx context.Context, employeeID uuid.UU
 	return out, rows.Err()
 }
 
-// ListActive — все интеграции в статусе connected (для cron-sync).
 func (r *IntegrationRepo) ListActive(ctx context.Context) ([]domain.Integration, error) {
 	rows, err := r.pool.Query(ctx, `
 		`+integrationCols+`
@@ -118,7 +117,6 @@ func (r *IntegrationRepo) ListActive(ctx context.Context) ([]domain.Integration,
 	return out, rows.Err()
 }
 
-// MarkSyncSuccess — отметка успешной синхронизации.
 func (r *IntegrationRepo) MarkSyncSuccess(ctx context.Context, id uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE integrations
@@ -128,7 +126,6 @@ func (r *IntegrationRepo) MarkSyncSuccess(ctx context.Context, id uuid.UUID) err
 	return err
 }
 
-// MarkSyncError — отметка ошибки.
 func (r *IntegrationRepo) MarkSyncError(ctx context.Context, id uuid.UUID, errMsg string) error {
 	_, err := r.pool.Exec(ctx, `
 		UPDATE integrations
@@ -138,7 +135,6 @@ func (r *IntegrationRepo) MarkSyncError(ctx context.Context, id uuid.UUID, errMs
 	return err
 }
 
-// UpdateTokens — обновляет access/refresh/expires после OAuth refresh.
 func (r *IntegrationRepo) UpdateTokens(ctx context.Context, id uuid.UUID, accessEnc, refreshEnc string, expiresAt time.Time) error {
 	var expPtr *time.Time
 	if !expiresAt.IsZero() {
@@ -168,8 +164,6 @@ func (r *IntegrationRepo) Delete(ctx context.Context, id, employeeID uuid.UUID) 
 	}
 	return nil
 }
-
-// --- helpers ---
 
 const integrationCols = `
 	SELECT id, employee_id, provider, COALESCE(account_email, ''),

@@ -18,7 +18,7 @@ import (
 
 type RecommendationHandler struct {
 	svc  *service.RecommendationService
-	pool *pgxpool.Pool // для резолва employee → full_name/role/department
+	pool *pgxpool.Pool
 }
 
 func NewRecommendationHandler(svc *service.RecommendationService, pool *pgxpool.Pool) *RecommendationHandler {
@@ -51,7 +51,6 @@ func (h *RecommendationHandler) list(c fiber.Ctx) error {
 		return err
 	}
 
-	// Для team/all резолвим имена + роль/отдел один раз батчем.
 	var empRefs map[uuid.UUID]EmployeeRefDTO
 	if scope == service.ScopeTeam || scope == service.ScopeAll {
 		empRefs = h.fetchEmployeeRefs(c.Context(), list)
@@ -72,8 +71,6 @@ func (h *RecommendationHandler) list(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"recommendations": out, "scope": string(scope)})
 }
 
-// fetchEmployeeRefs — батчем подгружает имена/роли/отделы для всех employee_id,
-// встретившихся в рекомендациях. Делает один SQL вместо N+1.
 func (h *RecommendationHandler) fetchEmployeeRefs(ctx context.Context, recs []domain.Recommendation) map[uuid.UUID]EmployeeRefDTO {
 	ids := make([]uuid.UUID, 0, len(recs))
 	seen := map[uuid.UUID]struct{}{}

@@ -1,4 +1,3 @@
-// Package handler — Fiber-обработчики HTTP и DTO для входа/выхода.
 package handler
 
 import (
@@ -8,8 +7,6 @@ import (
 
 	"worktimesync/internal/domain"
 )
-
-// --- Auth DTO ---
 
 type RegisterRequest struct {
 	Email    string `json:"email"`
@@ -39,7 +36,6 @@ type AuthResponse struct {
 	Employee *EmployeeDTO      `json:"employee,omitempty"`
 }
 
-// UserDTO — публичная форма пользователя (без password_hash).
 type UserDTO struct {
 	ID        uuid.UUID `json:"id"`
 	Email     string    `json:"email"`
@@ -64,7 +60,6 @@ func UserToDTO(u domain.User) UserDTO {
 	}
 }
 
-// EmployeeDTO — публичная форма employee.
 type EmployeeDTO struct {
 	ID                  uuid.UUID  `json:"id"`
 	UserID              uuid.UUID  `json:"user_id"`
@@ -94,13 +89,10 @@ func EmployeeToDTO(e domain.Employee) EmployeeDTO {
 	return dto
 }
 
-// ErrorResponse — стандартная форма ошибки.
 type ErrorResponse struct {
 	Error string `json:"error"`
 	Code  string `json:"code,omitempty"`
 }
-
-// --- Profile DTO ---
 
 type DayHoursDTO struct {
 	Start string `json:"start"`
@@ -179,8 +171,6 @@ type UpdateProfileRequest struct {
 	WorkFormat string        `json:"work_format"`
 }
 
-// --- TimeException DTO ---
-
 type TimeExceptionDTO struct {
 	ID         uuid.UUID `json:"id"`
 	EmployeeID uuid.UUID `json:"employee_id"`
@@ -212,16 +202,12 @@ type CreateExceptionRequest struct {
 	Comment string    `json:"comment,omitempty"`
 }
 
-// --- /me DTO (расширенная) ---
-
 type MeResponse struct {
 	User        UserDTO            `json:"user"`
 	Employee    *EmployeeDTO       `json:"employee,omitempty"`
 	WorkProfile *WorkProfileDTO    `json:"work_profile,omitempty"`
 	Exceptions  []TimeExceptionDTO `json:"exceptions,omitempty"`
 }
-
-// --- Integration DTO ---
 
 type IntegrationDTO struct {
 	ID           uuid.UUID  `json:"id"`
@@ -269,27 +255,25 @@ type ConnectJiraRequest struct {
 	Label    string `json:"label,omitempty"`
 }
 
-// --- Tracker tasks DTO ---
-
 type TaskSlotDTO struct {
-	Date  string  `json:"date"` // YYYY-MM-DD
+	Date  string  `json:"date"`
 	Hours float64 `json:"hours"`
 }
 
 type TrackerTaskDTO struct {
-	ID               uuid.UUID  `json:"id"`
-	IntegrationID    *uuid.UUID `json:"integration_id,omitempty"`
-	SourceTaskID     string     `json:"source_task_id"`
-	Title            string     `json:"title"`
-	Description      string     `json:"description,omitempty"`
-	Status           string     `json:"status,omitempty"`
-	Priority         string     `json:"priority,omitempty"`
-	Type             string     `json:"type,omitempty"`
-	DueAt            *time.Time `json:"due_at,omitempty"`
-	EstimatedHours   *float64   `json:"estimated_hours,omitempty"`
-	ActualHours      *float64   `json:"actual_hours,omitempty"`
-	AIEstimatedHours *float64   `json:"ai_estimated_hours,omitempty"`
-	AIConfidence     *float64   `json:"ai_confidence,omitempty"`
+	ID               uuid.UUID     `json:"id"`
+	IntegrationID    *uuid.UUID    `json:"integration_id,omitempty"`
+	SourceTaskID     string        `json:"source_task_id"`
+	Title            string        `json:"title"`
+	Description      string        `json:"description,omitempty"`
+	Status           string        `json:"status,omitempty"`
+	Priority         string        `json:"priority,omitempty"`
+	Type             string        `json:"type,omitempty"`
+	DueAt            *time.Time    `json:"due_at,omitempty"`
+	EstimatedHours   *float64      `json:"estimated_hours,omitempty"`
+	ActualHours      *float64      `json:"actual_hours,omitempty"`
+	AIEstimatedHours *float64      `json:"ai_estimated_hours,omitempty"`
+	AIConfidence     *float64      `json:"ai_confidence,omitempty"`
 	Slots            []TaskSlotDTO `json:"slots,omitempty"`
 }
 
@@ -311,23 +295,19 @@ func TrackerTaskToDTO(t domain.TrackerTask) TrackerTaskDTO {
 	}
 }
 
-// --- Calendar Event DTO ---
-
 type CalendarEventDTO struct {
-	ID             uuid.UUID  `json:"id"`
-	Title          string     `json:"title"`
-	Description    string     `json:"description,omitempty"`
-	StartAt        time.Time  `json:"start_at"`
-	EndAt          time.Time  `json:"end_at"`
-	Timezone       string     `json:"timezone,omitempty"`
-	AttendeesCount int        `json:"attendees_count,omitempty"`
-	Organizer      string     `json:"organizer,omitempty"`
-	Status         string     `json:"status"`
-	IsExcluded     bool       `json:"is_excluded,omitempty"`
-	Category       string     `json:"category,omitempty"`
-	// IntegrationID — UUID интеграции, через которую событие синкнуто. Null
-	// означает «нативное» событие Workie (создано через /scheduler или seed).
-	// На фронте — ключ фильтра «Источники» в стиле Outlook.
+	ID             uuid.UUID `json:"id"`
+	Title          string    `json:"title"`
+	Description    string    `json:"description,omitempty"`
+	StartAt        time.Time `json:"start_at"`
+	EndAt          time.Time `json:"end_at"`
+	Timezone       string    `json:"timezone,omitempty"`
+	AttendeesCount int       `json:"attendees_count,omitempty"`
+	Organizer      string    `json:"organizer,omitempty"`
+	Status         string    `json:"status"`
+	IsExcluded     bool      `json:"is_excluded,omitempty"`
+	Category       string    `json:"category,omitempty"`
+
 	IntegrationID *uuid.UUID `json:"integration_id,omitempty"`
 }
 
@@ -352,32 +332,26 @@ func EventToDTO(e domain.CalendarEvent) CalendarEventDTO {
 	}
 }
 
-// --- Recommendation DTO ---
-
 type RecommendationDTO struct {
-	ID          uuid.UUID      `json:"id"`
-	EmployeeID  *uuid.UUID     `json:"employee_id,omitempty"`
+	ID          uuid.UUID       `json:"id"`
+	EmployeeID  *uuid.UUID      `json:"employee_id,omitempty"`
 	Employee    *EmployeeRefDTO `json:"employee,omitempty"`
-	Kind        string         `json:"kind"`
-	Priority    string         `json:"priority"`
-	Title       string         `json:"title"`
-	Explanation string         `json:"explanation"`
-	Status      string         `json:"status"`
-	GeneratedBy string         `json:"generated_by"`
-	Evidence    map[string]any `json:"evidence,omitempty"`
-	CreatedAt   time.Time      `json:"created_at"`
+	Kind        string          `json:"kind"`
+	Priority    string          `json:"priority"`
+	Title       string          `json:"title"`
+	Explanation string          `json:"explanation"`
+	Status      string          `json:"status"`
+	GeneratedBy string          `json:"generated_by"`
+	Evidence    map[string]any  `json:"evidence,omitempty"`
+	CreatedAt   time.Time       `json:"created_at"`
 }
 
-// EmployeeRefDTO — компактная ссылка на сотрудника в ответах,
-// возвращающих рекомендации/диагностику команды или всей компании.
 type EmployeeRefDTO struct {
 	ID         uuid.UUID `json:"id"`
 	FullName   string    `json:"full_name"`
 	Role       string    `json:"role,omitempty"`
 	Department string    `json:"department,omitempty"`
 }
-
-// --- AI Chat DTO ---
 
 type AIChatRequest struct {
 	ConversationID *uuid.UUID `json:"conversation_id,omitempty"`

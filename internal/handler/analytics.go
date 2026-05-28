@@ -29,21 +29,15 @@ func NewAnalyticsHandler(
 	return &AnalyticsHandler{dash: dash, me: me, team: team, anomalies: anomalies, forecast: forecast}
 }
 
-// Mount — три группы под /analytics:
-//   - /me/*    — любой авторизованный (личная аналитика).
-//   - /teams/* — Manager / PM / HR / Admin (командная).
-//   - /*       — Admin / HR / PM / Analyst (общая по компании).
 func (h *AnalyticsHandler) Mount(r fiber.Router) {
 	g := r.Group("/analytics")
 
-	// --- Личная (все авторизованные) ---
 	me := g.Group("/me")
 	me.Get("/overview", h.meOverview)
 	me.Get("/trend", h.meTrend)
 	me.Get("/conflicts-by-weekday", h.meConflictsByWeekday)
 	me.Get("/hours-by-week", h.meHoursByWeek)
 
-	// --- Команды (руководящие роли) ---
 	teamRoles := middleware.RequireRole(
 		domain.RoleManager, domain.RolePM, domain.RoleHR, domain.RoleAdmin,
 	)
@@ -55,7 +49,6 @@ func (h *AnalyticsHandler) Mount(r fiber.Router) {
 	tg.Get("/freshness-trend", h.teamsFreshnessTrend)
 	tg.Get("/groups-distribution", h.teamsGroupsDistribution)
 
-	// --- Компания (топ-роли) ---
 	companyRoles := middleware.RequireRole(
 		domain.RoleAdmin, domain.RoleHR, domain.RolePM, domain.RoleAnalyst,
 	)
@@ -68,8 +61,6 @@ func (h *AnalyticsHandler) Mount(r fiber.Router) {
 	g.Get("/anomalies", companyRoles, h.anomaliesList)
 	g.Get("/forecast", companyRoles, h.forecastList)
 }
-
-// --- Company ---
 
 func (h *AnalyticsHandler) overview(c fiber.Ctx) error {
 	res, err := h.dash.Overview(c.Context())
@@ -135,8 +126,6 @@ func (h *AnalyticsHandler) forecastList(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"forecast": res})
 }
 
-// --- Me ---
-
 func (h *AnalyticsHandler) meOverview(c fiber.Ctx) error {
 	empID := middleware.EmployeeID(c)
 	if empID == uuid.Nil {
@@ -185,9 +174,6 @@ func (h *AnalyticsHandler) meHoursByWeek(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"weeks": res})
 }
 
-// --- Teams ---
-
-// parseTeamID — читает query param ?team_id, либо возвращает nil.
 func parseTeamID(c fiber.Ctx) (*uuid.UUID, error) {
 	raw := c.Query("team_id")
 	if raw == "" {
@@ -200,7 +186,6 @@ func parseTeamID(c fiber.Ctx) (*uuid.UUID, error) {
 	return &id, nil
 }
 
-// teamScopeForbidden — отображает попытку обратиться к чужой команде.
 func teamScopeForbidden(err error) error {
 	if errors.Is(err, service.ErrTeamNotOwned) {
 		return fiber.NewError(fiber.StatusForbidden, "team is not yours")

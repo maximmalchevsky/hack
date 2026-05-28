@@ -13,9 +13,6 @@ import (
 	"worktimesync/internal/ai"
 )
 
-// MetricsCache — кэш расчётов метрик в Redis.
-// Ключ: metrics:emp:<id>:v1, значение: JSON ai.Metrics, TTL 15 мин.
-// Инвалидация через Redis pub/sub-канал metrics:invalidate.
 type MetricsCache struct {
 	rdb     *redis.Client
 	ttl     time.Duration
@@ -63,7 +60,6 @@ func (c *MetricsCache) Set(ctx context.Context, empID uuid.UUID, m ai.Metrics) {
 	_ = c.rdb.Set(ctx, c.key(empID), raw, c.ttl).Err()
 }
 
-// Invalidate — удаляет кэш и публикует событие в pub/sub (на случай других нод).
 func (c *MetricsCache) Invalidate(ctx context.Context, empID uuid.UUID) {
 	if c.rdb == nil {
 		return
@@ -72,8 +68,6 @@ func (c *MetricsCache) Invalidate(ctx context.Context, empID uuid.UUID) {
 	_ = c.rdb.Publish(ctx, c.channel, empID.String()).Err()
 }
 
-// SubscribeInvalidations — для будущей мультинодовой работы.
-// Возвращает канал с employee_id, который нужно инвалидировать локально.
 func (c *MetricsCache) SubscribeInvalidations(ctx context.Context) (<-chan uuid.UUID, func()) {
 	out := make(chan uuid.UUID, 32)
 	if c.rdb == nil {

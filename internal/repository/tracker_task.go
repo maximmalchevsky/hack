@@ -13,7 +13,6 @@ import (
 	"worktimesync/internal/domain"
 )
 
-// TrackerTaskRepo — задачи из Jira/Yandex Tracker + связанные планы.
 type TrackerTaskRepo struct {
 	pool *pgxpool.Pool
 }
@@ -22,7 +21,6 @@ func NewTrackerTaskRepo(pool *pgxpool.Pool) *TrackerTaskRepo {
 	return &TrackerTaskRepo{pool: pool}
 }
 
-// UpsertTaskInput — параметры Upsert. Каноничный путь записи задачи из sync'а.
 type UpsertTaskInput struct {
 	EmployeeID     uuid.UUID
 	IntegrationID  *uuid.UUID
@@ -38,11 +36,6 @@ type UpsertTaskInput struct {
 	Raw            map[string]any
 }
 
-// Upsert — INSERT…ON CONFLICT по (integration_id, source_task_id).
-// При повторном вызове обновляет описательные поля, но НЕ затирает
-// ai_estimated_hours/ai_estimate_confidence (их пишет TaskEstimator отдельно).
-// estimated_hours тоже не затирается, если новое значение nil — пользователь
-// мог поставить ручную оценку, и следующий sync без estimate её не должен сбить.
 func (r *TrackerTaskRepo) Upsert(ctx context.Context, in UpsertTaskInput) (*domain.TrackerTask, error) {
 	rawJSON, _ := json.Marshal(in.Raw)
 	row := r.pool.QueryRow(ctx, `
@@ -83,8 +76,6 @@ func (r *TrackerTaskRepo) Upsert(ctx context.Context, in UpsertTaskInput) (*doma
 	return scanTrackerTask(row)
 }
 
-// SetAIEstimate — заполняет ai_estimated_hours / ai_estimate_confidence
-// после успешного дёргания GigaChat'а. Перезаписывает прошлую AI-оценку.
 func (r *TrackerTaskRepo) SetAIEstimate(ctx context.Context, taskID uuid.UUID, hours, confidence float64) error {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE tracker_tasks
@@ -100,8 +91,6 @@ func (r *TrackerTaskRepo) SetAIEstimate(ctx context.Context, taskID uuid.UUID, h
 	return nil
 }
 
-// SetManualEstimate — пользователь принял оценку AI или вписал свою цифру.
-// Идёт в estimated_hours (важно для planner.EffectiveEstimate).
 func (r *TrackerTaskRepo) SetManualEstimate(ctx context.Context, taskID, empID uuid.UUID, hours float64) error {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE tracker_tasks
@@ -117,12 +106,11 @@ func (r *TrackerTaskRepo) SetManualEstimate(ctx context.Context, taskID, empID u
 	return nil
 }
 
-// ListTasksFilter — фильтры для ListByEmployee.
 type ListTasksFilter struct {
-	EmployeeID         uuid.UUID
-	IncludeDone        bool      // по умолчанию false — Done скрываем
-	OnlyDueBefore      time.Time // если задано — задачи с due_at <= этой даты или без due_at
-	OnlyMissingEstimate bool     // только задачи где estimated_hours IS NULL
+	EmployeeID          uuid.UUID
+	IncludeDone         bool
+	OnlyDueBefore       time.Time
+	OnlyMissingEstimate bool
 }
 
 func (r *TrackerTaskRepo) ListByEmployee(ctx context.Context, f ListTasksFilter) ([]domain.TrackerTask, error) {
@@ -167,11 +155,6 @@ func (r *TrackerTaskRepo) ListByEmployee(ctx context.Context, f ListTasksFilter)
 	return out, rows.Err()
 }
 
-// SaveSlots — полностью переписывает план задачи: DELETE + INSERT в одной
-// транзакции. Слоты с нулевыми/отрицательными часами игнорируются.
-//
-// Если planner выдал пустой список — это валидно: задача планируется, но
-// не помещается в горизонт (deadline_at_risk).
 func (r *TrackerTaskRepo) SaveSlots(ctx context.Context, taskID uuid.UUID, slots []domain.TaskPlanSlot) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -196,14 +179,11 @@ func (r *TrackerTaskRepo) SaveSlots(ctx context.Context, taskID uuid.UUID, slots
 	return tx.Commit(ctx)
 }
 
-// DeleteAllSlots — DELETE по сотруднику (используется replan'ом перед
-// полным пересчётом, чтобы не было «мусорных» слотов от удалённых задач).
 func (r *TrackerTaskRepo) DeleteAllSlots(ctx context.Context, empID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `DELETE FROM task_plan_slots WHERE employee_id = $1`, empID)
 	return err
 }
 
-// ListSlots — слоты сотрудника в окне [from, to]. Для UI (Gantt, dashboard).
 func (r *TrackerTaskRepo) ListSlots(ctx context.Context, empID uuid.UUID, from, to time.Time) ([]domain.TaskPlanSlot, error) {
 	rows, err := r.pool.Query(ctx, `
 		SELECT id, task_id, employee_id, date, hours, computed_at
@@ -226,7 +206,6 @@ func (r *TrackerTaskRepo) ListSlots(ctx context.Context, empID uuid.UUID, from, 
 	return out, rows.Err()
 }
 
-// ByID — одна задача по UUID. Используется handler'ом PATCH estimate.
 func (r *TrackerTaskRepo) ByID(ctx context.Context, id uuid.UUID) (*domain.TrackerTask, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, employee_id, integration_id, source_task_id,

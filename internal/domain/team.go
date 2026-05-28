@@ -6,7 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// Team — рабочая команда.
 type Team struct {
 	ID        uuid.UUID
 	Name      string
@@ -15,14 +14,12 @@ type Team struct {
 	UpdatedAt time.Time
 }
 
-// TeamMember — состав команды.
 type TeamMember struct {
 	TeamID     uuid.UUID
 	EmployeeID uuid.UUID
 	JoinedAt   time.Time
 }
 
-// TeamMemberDetailed — расширенный member для UI: имя/роль/TZ/статус.
 type TeamMemberDetailed struct {
 	TeamID              uuid.UUID
 	EmployeeID          uuid.UUID

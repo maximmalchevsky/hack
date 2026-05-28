@@ -1,7 +1,3 @@
-// Package yandextracker — TrackerProvider для Yandex Tracker.
-//
-// REST API: https://tracker.yandex.net/v2/issues/_search
-// Авторизация: OAuth-token (`Authorization: OAuth <token>`) + `X-Org-ID`.
 package yandextracker
 
 import (
@@ -27,11 +23,10 @@ func New() *Provider {
 
 func (p *Provider) Name() integrations.Provider { return integrations.ProviderYandexTracker }
 
-// AuthPayload — токен + ID организации.
 type AuthPayload struct {
 	OAuthToken string `json:"oauth_token"`
 	OrgID      string `json:"org_id"`
-	Username   string `json:"username"` // login или ID — для фильтрации задач по assignee
+	Username   string `json:"username"`
 }
 
 func (p *Provider) Authenticate(ctx context.Context, authCode string) (*integrations.Token, error) {
@@ -46,7 +41,6 @@ func (p *Provider) Authenticate(ctx context.Context, authCode string) (*integrat
 		return nil, errors.New("yandex_tracker: oauth_token/org_id required")
 	}
 
-	// Probe: GET /v2/myself
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
 		"https://api.tracker.yandex.net/v2/myself", nil)
 	req.Header.Set("Authorization", "OAuth "+payload.OAuthToken)
@@ -74,11 +68,9 @@ func (p *Provider) Authenticate(ctx context.Context, authCode string) (*integrat
 }
 
 func (p *Provider) RefreshToken(ctx context.Context, _ *integrations.Token) (*integrations.Token, error) {
-	// Yandex OAuth токен живёт год+ — refresh не делаем на этом уровне.
 	return nil, nil
 }
 
-// FetchTasks — задачи, назначенные на сотрудника.
 func (p *Provider) FetchTasks(ctx context.Context, token *integrations.Token, assignee string, from, to time.Time) ([]integrations.Task, error) {
 	if token == nil {
 		return nil, errors.New("yandex_tracker: nil token")
@@ -97,7 +89,6 @@ func (p *Provider) FetchTasks(ctx context.Context, token *integrations.Token, as
 		return nil, errors.New("yandex_tracker: assignee required")
 	}
 
-	// POST /v2/issues/_search с фильтром.
 	body := map[string]any{
 		"filter": map[string]any{
 			"assignee": who,
@@ -133,8 +124,8 @@ func (p *Provider) FetchTasks(ctx context.Context, token *integrations.Token, as
 		Status  struct {
 			Display string `json:"display"`
 		} `json:"status"`
-		Due       string `json:"due"`
-		Estimation string `json:"estimation"` // ISO-8601 duration P1D, PT2H30M
+		Due        string `json:"due"`
+		Estimation string `json:"estimation"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("yandex_tracker: decode: %w", err)
@@ -162,8 +153,6 @@ func (p *Provider) FetchTasks(ctx context.Context, token *integrations.Token, as
 	return tasks, nil
 }
 
-// parseISODurationHours — минимальный парсер ISO-8601 duration в часы.
-// Поддерживаем P{n}D, PT{n}H, PT{n}M и комбинации (P1DT2H30M).
 func parseISODurationHours(s string) float64 {
 	hours := 0.0
 	if len(s) < 2 || s[0] != 'P' {
@@ -189,7 +178,7 @@ func parseISODurationHours(s string) float64 {
 			}
 			switch ch {
 			case 'D':
-				total += float64(num) * 8 // считаем рабочий день = 8ч
+				total += float64(num) * 8
 			case 'H':
 				total += float64(num)
 			case 'M':

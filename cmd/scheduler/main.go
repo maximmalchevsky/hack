@@ -43,38 +43,27 @@ func main() {
 		Logger: &asynqLogger{log: log},
 	})
 
-	// Регистрируем периодические задачи (cron-style).
-	//
-	// Документация по cron-spec: https://pkg.go.dev/github.com/hibiken/asynq#Scheduler.Register
 	periodic := []struct {
 		spec    string
 		taskKey string
 		queue   string
 		payload []byte
 	}{
-		// Каждые 5 минут пинаем sync-incremental — fan-out по всем активным
-		// integrations делает worker (handleSyncTickAll).
+
 		{"@every 5m", workers.TaskSyncTickAll, workers.QueueDefault, nil},
 
-		// Каждые 25 минут — за 5 минут до истечения GigaChat access_token (30m TTL).
 		{"@every 25m", workers.TaskOAuthRefreshGigaChat, workers.QueueCritical, nil},
 
-		// Каждый час — smart-notifier разбирает HR-Roadmap и пушит уведомления.
 		{"@every 1h", workers.TaskNotificationSend, workers.QueueDefault, nil},
 
-		// Ежедневно в 06:00 UTC — fan-out пересборки рекомендаций по всем сотрудникам.
 		{"0 6 * * *", workers.TaskDigestDaily, workers.QueueLow, nil},
 
-		// Каждую минуту — сканируем calendar_events и шлём reminder за 15 мин до старта.
 		{"@every 1m", workers.TaskReminderScan, workers.QueueDefault, nil},
 
-		// Понедельник 09:00 MSK (06:00 UTC) — собираем недельный digest для менеджеров.
 		{"0 6 * * 1", workers.TaskTeamDigestWeekly, workers.QueueLow, nil},
 
-		// Раз в час — пересчёт плана задач (Jira-планировщик) для всех сотрудников
-		// с активной tracker-интеграцией. fan-out по empoyees внутри worker'а.
 		{"@every 1h", workers.TaskTasksReplanAll, workers.QueueLow, nil},
-		// Раз в 30 минут — AI-оценка для задач без estimated_hours.
+
 		{"@every 30m", workers.TaskTasksAIEstimate, workers.QueueLow, nil},
 	}
 

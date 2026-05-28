@@ -12,7 +12,6 @@ import (
 	"worktimesync/internal/service"
 )
 
-// MeetingsHandler — список и отмена созданных встреч.
 type MeetingsHandler struct {
 	proposal *service.MeetingProposalService
 }
@@ -21,7 +20,6 @@ func NewMeetingsHandler(proposal *service.MeetingProposalService) *MeetingsHandl
 	return &MeetingsHandler{proposal: proposal}
 }
 
-// Mount — /meetings/* под защитой AuthRequired (middleware ставится в server.go).
 func (h *MeetingsHandler) Mount(r fiber.Router) {
 	g := r.Group("/meetings")
 	g.Get("/my", h.list)
@@ -34,10 +32,6 @@ func (h *MeetingsHandler) Mount(r fiber.Router) {
 	g.Delete("/:id", h.cancel)
 }
 
-// suggestReschedule — топ-N встреч viewer'а, которые лучше всего перенести,
-// с обоснованием. См. service.SuggestReschedule.
-//
-//	GET /meetings/suggest-reschedule?days=7&top=3
 func (h *MeetingsHandler) suggestReschedule(c fiber.Ctx) error {
 	userID := middleware.UserID(c)
 	empID := middleware.EmployeeID(c)
@@ -74,18 +68,12 @@ func atoiOr(s string, def int) int {
 	return n
 }
 
-// checkConflictsRequest — body для POST /meetings/check-conflicts.
-// Используется UI «Создать вручную» для мягкого предупреждения о занятости.
 type checkConflictsRequest struct {
 	StartAt     time.Time   `json:"start_at"`
 	EndAt       time.Time   `json:"end_at"`
 	EmployeeIDs []uuid.UUID `json:"employee_ids"`
 }
 
-// checkConflicts — POST /meetings/check-conflicts.
-// Возвращает список занятостей по каждому из переданных employee_ids,
-// пересекающихся с указанным слотом. UI рендерит как «мягкое» предупреждение,
-// не блокирующее создание.
 func (h *MeetingsHandler) checkConflicts(c fiber.Ctx) error {
 	var req checkConflictsRequest
 	if err := json.Unmarshal(c.Body(), &req); err != nil {
@@ -107,13 +95,11 @@ func (h *MeetingsHandler) checkConflicts(c fiber.Ctx) error {
 		}
 		return err
 	}
-	// Заодно проверяем перегруз: сумма часов встреч в неделе + новая.
-	// Падать на ошибке не имеем права — UI получит хотя бы конфликты.
+
 	overload, _ := h.proposal.CheckOverload(c.Context(), req.StartAt, req.EndAt, req.EmployeeIDs)
 	return c.JSON(fiber.Map{"conflicts": conflicts, "overload": overload})
 }
 
-// incoming — приглашения для текущего пользователя.
 func (h *MeetingsHandler) incoming(c fiber.Ctx) error {
 	empID := middleware.EmployeeID(c)
 	if empID == uuid.Nil {
@@ -126,13 +112,11 @@ func (h *MeetingsHandler) incoming(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"invites": res})
 }
 
-// respondRequest — body для POST /meetings/:id/respond.
 type respondRequest struct {
-	Status     string `json:"status"`      // accepted | declined
-	PushYandex bool   `json:"push_yandex"` // только для accept — добавить в свой Яндекс
+	Status     string `json:"status"`
+	PushYandex bool   `json:"push_yandex"`
 }
 
-// respond — accept / decline приглашения текущим пользователем.
 func (h *MeetingsHandler) respond(c fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
@@ -163,7 +147,6 @@ func (h *MeetingsHandler) respond(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ok": true})
 }
 
-// responses — список ответов всех участников. Видит инициатор / owner команды / admin / hr.
 func (h *MeetingsHandler) responses(c fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
@@ -186,14 +169,12 @@ func (h *MeetingsHandler) responses(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"responses": res})
 }
 
-// updateMeetingRequest — все поля optional. Если ничего не задано → 400.
 type updateMeetingRequest struct {
 	Title   *string    `json:"title,omitempty"`
 	StartAt *time.Time `json:"start_at,omitempty"`
 	EndAt   *time.Time `json:"end_at,omitempty"`
 }
 
-// update — PUT /meetings/:id.
 func (h *MeetingsHandler) update(c fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {
@@ -236,7 +217,6 @@ func (h *MeetingsHandler) update(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ok": true})
 }
 
-// list — список встреч для текущего пользователя (свои + командные для manager).
 func (h *MeetingsHandler) list(c fiber.Ctx) error {
 	userID := middleware.UserID(c)
 	empID := middleware.EmployeeID(c)
@@ -251,7 +231,6 @@ func (h *MeetingsHandler) list(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"meetings": res})
 }
 
-// cancel — DELETE /meetings/:id.
 func (h *MeetingsHandler) cancel(c fiber.Ctx) error {
 	id, err := uuid.Parse(c.Params("id"))
 	if err != nil {

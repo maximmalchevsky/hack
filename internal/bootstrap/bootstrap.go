@@ -1,11 +1,3 @@
-// Package bootstrap — первичная инициализация системы при старте API.
-//
-// Что делает:
-//  1. Если admin'а нет — создаёт со случайным паролем и пишет креды в лог ОДИН РАЗ
-//  2. Создаёт демо-сотрудников (если их нет) с фиксированным паролем для удобства демо
-//  3. Создаёт демо-команды и состав
-//
-// Идемпотентно — повторный запуск пропускает существующих пользователей.
 package bootstrap
 
 import (
@@ -23,24 +15,11 @@ import (
 	"worktimesync/pkg/auth"
 )
 
-// Enqueuer — минимальный интерфейс для постановки фоновых задач после seed'а.
-// Bootstrap не должен зависеть от пакета workers (циклический импорт), поэтому
-// принимаем абстракцию. Может быть nil — тогда задачи не ставятся.
 type Enqueuer interface {
 	EnqueueMetricsRecompute(employeeID uuid.UUID) error
 	EnqueueAIRecommend(employeeID uuid.UUID) error
 }
 
-// Run — выполняет bootstrap-логику. Безопасно вызывать при каждом старте.
-// Если enq != nil, ставит каждому сотруднику metrics:recompute и (только при
-// первичном seed'е событий) ai:recommend.
-//
-// metrics:recompute дёргаем ВСЕГДА: metrics_snapshots должен быть тёплый сразу
-// после старта api, иначе /analytics показывает нули, пока не сработает первый
-// пересчёт (а он триггерится только изменениями профиля/событий/исключений).
-//
-// ai:recommend ставим только если события реально засеялись — иначе на каждый
-// рестарт будем дёргать GigaChat впустую.
 func Run(ctx context.Context, db *pgxpool.Pool, enq Enqueuer, log zerolog.Logger) error {
 	if err := ensureAdmin(ctx, db, log); err != nil {
 		return fmt.Errorf("bootstrap admin: %w", err)
@@ -56,8 +35,7 @@ func Run(ctx context.Context, db *pgxpool.Pool, enq Enqueuer, log zerolog.Logger
 		return fmt.Errorf("bootstrap events: %w", err)
 	}
 	if err := backfillMeetingEvents(ctx, db, log); err != nil {
-		// best-effort — без backfill старые встречи останутся невидимы,
-		// но это не повод валить весь bootstrap.
+
 		log.Warn().Err(err).Msg("bootstrap: backfill meeting events failed")
 	}
 	if enq != nil {
@@ -66,16 +44,8 @@ func Run(ctx context.Context, db *pgxpool.Pool, enq Enqueuer, log zerolog.Logger
 	return nil
 }
 
-// backfillMeetingEvents — для всех активных (не cancelled) meeting_proposals,
-// у которых ещё нет calendar_event у инициатора, создаёт его. Идемпотентно
-// (NOT EXISTS-фильтр). Нужен потому, что раньше Propose() писал calendar_event
-// только при успешном push в Yandex; встречи без Yandex-интеграции
-// у инициатора были невидимы в /dashboard, /workload, find-window.
 func backfillMeetingEvents(ctx context.Context, db *pgxpool.Pool, log zerolog.Logger) error {
-	// 0. Чистим дубли: если встреча запушена в Yandex (есть meeting_pushes),
-	// то она уже попадает в calendar_events через CalDAV-sync (с integration_id).
-	// Наш native-дубль (integration_id IS NULL, source 'meeting-…') тогда лишний —
-	// удаляем его, чтобы в /dashboard и /workload не было двух одинаковых встреч.
+
 	if tag, err := db.Exec(ctx, `
 		DELETE FROM calendar_events ce
 		WHERE ce.integration_id IS NULL
@@ -92,9 +62,6 @@ func backfillMeetingEvents(ctx context.Context, db *pgxpool.Pool, log zerolog.Lo
 		log.Info().Int64("count", n).Msg("bootstrap: removed duplicate native meeting events (have Yandex push)")
 	}
 
-	// 1. Создаём native calendar_event для встреч инициатора, у которых нет
-	// НИ native-события, НИ Yandex-push'а. Без второго условия мы плодили бы
-	// дубль рядом с Yandex-версией.
 	tag, err := db.Exec(ctx, `
 		INSERT INTO calendar_events
 			(employee_id, integration_id, source_event_id, title, description,
@@ -134,8 +101,6 @@ func backfillMeetingEvents(ctx context.Context, db *pgxpool.Pool, log zerolog.Lo
 	return nil
 }
 
-// enqueueAllEmployees — ставит metrics:recompute всем сотрудникам всегда, а
-// ai:recommend — только если в этом запуске засеялись события.
 func enqueueAllEmployees(ctx context.Context, db *pgxpool.Pool, enq Enqueuer, log zerolog.Logger, withRecommend bool) {
 	rows, err := db.Query(ctx, `SELECT id FROM employees ORDER BY id`)
 	if err != nil {
@@ -208,7 +173,6 @@ func ensureAdmin(ctx context.Context, db *pgxpool.Pool, log zerolog.Logger) erro
 		return err
 	}
 
-	// ОДНО РАЗ ИЗ ВСЕХ ЗАПУСКОВ — выводим креды.
 	log.Warn().Msg("==================== ADMIN CREATED (one-time) ====================")
 	log.Warn().Str("email", adminEmail).Str("password", password).
 		Msg("Сохрани этот пароль. Он больше нигде не появится.")
@@ -217,7 +181,7 @@ func ensureAdmin(ctx context.Context, db *pgxpool.Pool, log zerolog.Logger) erro
 }
 
 func randomPassword(length int) (string, error) {
-	// Алфавит без визуально неоднозначных символов (0/O, 1/l/I, etc).
+
 	alphabet := "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*-_=+"
 	out := make([]byte, length)
 	bn := big.NewInt(int64(len(alphabet)))
@@ -230,8 +194,6 @@ func randomPassword(length int) (string, error) {
 	}
 	return string(out), nil
 }
-
-// --- демо-сотрудники ---
 
 type demoPerson struct {
 	Email      string
@@ -385,8 +347,6 @@ func createDemoPerson(ctx context.Context, db *pgxpool.Pool, p demoPerson, hash 
 
 	return tx.Commit(ctx)
 }
-
-// --- демо-команды ---
 
 type demoTeam struct {
 	Name         string

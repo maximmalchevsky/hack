@@ -35,22 +35,15 @@ func (h *NotificationHandler) Mount(r fiber.Router) {
 	g.Post("/read-all", h.markAllRead)
 }
 
-// broadcastRequest — body для POST /notifications/broadcast.
-// Используется action-кнопкой «Разослать» в ИИ-ассистенте для рассылок
-// по сценариям burnout/overload/anomaly/stale_profile.
 type broadcastRequest struct {
 	Kind        string      `json:"kind"`
 	EmployeeIDs []uuid.UUID `json:"employee_ids"`
 }
 
-// broadcast — массовая рассылка in-app уведомлений группе сотрудников.
-// RBAC: manager / pm / hr / admin. Эмплои не могут рассылать сами себе и другим.
-// Дедуп внутри service: тот же kind тому же user'у не чаще раза в 24ч.
 func (h *NotificationHandler) broadcast(c fiber.Ctx) error {
 	role := middleware.CurrentRole(c)
 	switch role {
 	case domain.RoleManager, domain.RolePM, domain.RoleHR, domain.RoleAdmin:
-		// ok
 	default:
 		return fiber.NewError(fiber.StatusForbidden, "only manager/pm/hr/admin")
 	}
@@ -116,8 +109,6 @@ func (h *NotificationHandler) markAllRead(c fiber.Ctx) error {
 	return c.Status(fiber.StatusNoContent).Send(nil)
 }
 
-// sse — Server-Sent Events stream. Подписан на Redis pub/sub канал ws:user:<id>
-// и пересылает каждое сообщение клиенту в формате SSE.
 func (h *NotificationHandler) sse(c fiber.Ctx) error {
 	userID := middleware.UserID(c)
 	if userID == uuid.Nil {
@@ -130,7 +121,7 @@ func (h *NotificationHandler) sse(c fiber.Ctx) error {
 	c.Set("Content-Type", "text/event-stream")
 	c.Set("Cache-Control", "no-cache")
 	c.Set("Connection", "keep-alive")
-	c.Set("X-Accel-Buffering", "no") // отключает буферизацию у nginx/caddy
+	c.Set("X-Accel-Buffering", "no")
 
 	channel := service.WSNotificationsChannel + userID.String()
 	ctx, cancel := context.WithCancel(c.Context())
@@ -139,7 +130,6 @@ func (h *NotificationHandler) sse(c fiber.Ctx) error {
 	pubsub := h.redis.Subscribe(ctx, channel)
 	defer pubsub.Close()
 
-	// Fiber v3 поддерживает стриминг через SendStreamWriter.
 	return c.SendStreamWriter(func(w *bufio.Writer) {
 		_, _ = fmt.Fprintf(w, "event: ready\ndata: %s\n\n", `{"ok":true}`)
 		_ = w.Flush()
@@ -174,8 +164,6 @@ func (h *NotificationHandler) sse(c fiber.Ctx) error {
 	})
 }
 
-// --- DTO + helpers ---
-
 type NotificationDTO struct {
 	ID        uuid.UUID       `json:"id"`
 	Kind      string          `json:"kind"`
@@ -203,7 +191,6 @@ func notificationToDTO(n domain.Notification) NotificationDTO {
 	return d
 }
 
-// safeJSON — на случай если кто-то передаст ту самую "notification.created" структуру.
 func safeJSON(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {

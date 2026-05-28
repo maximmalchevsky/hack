@@ -1,20 +1,14 @@
-# WorkTime Sync — пример блока для Caddy на ХОСТЕ.
-# Скопируй в /etc/caddy/Caddyfile (или Caddyfile.d), замени домен.
-#
-# Контейнеры открыты на 127.0.0.1:8080 (API) и 127.0.0.1:3000 (web).
-# Let's Encrypt поднимется автоматически при первом запуске caddy reload.
 
 worktime.example.ru {
 	# API, swagger, healthz, websocket, SSE — на Go-бэкенд.
 	@api path /api/* /swagger* /healthz /metrics /ws/*
 	handle @api {
 		reverse_proxy 127.0.0.1:8080 {
-			# SSE / WebSocket: убираем буферизацию ответа.
 			flush_interval -1
 		}
 	}
 
-	# Всё остальное — SvelteKit (adapter-node).
+
 	handle {
 		reverse_proxy 127.0.0.1:3000
 	}

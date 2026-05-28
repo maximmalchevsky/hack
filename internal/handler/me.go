@@ -16,7 +16,6 @@ import (
 	"worktimesync/internal/service"
 )
 
-// MeHandler — GET /api/v1/me и связанные «свои» эндпоинты.
 type MeHandler struct {
 	pool      *pgxpool.Pool
 	users     *repository.UserRepo
@@ -24,8 +23,8 @@ type MeHandler struct {
 	events    *repository.CalendarEventRepo
 	profiles  *service.ProfileService
 	exception *service.ExceptionService
-	summary   *service.WeeklySummaryService // может быть nil
-	// Конфиг каналов уведомлений (для отдачи deeplink на фронт).
+	summary   *service.WeeklySummaryService
+
 	tgBotUsername string
 }
 
@@ -36,13 +35,11 @@ func NewMeHandler(pool *pgxpool.Pool, ps *service.ProfileService, es *service.Ex
 		emps:      repository.NewEmployeeRepo(pool),
 		events:    repository.NewCalendarEventRepo(pool),
 		profiles:  ps,
-		// заполняется через WithTelegramBotUsername (опционально).
 		exception: es,
 		summary:   sm,
 	}
 }
 
-// WeeklySummary — GET /api/v1/me/weekly-summary
 func (h *MeHandler) WeeklySummary(c fiber.Ctx) error {
 	uid := middleware.UserID(c)
 	if uid == uuid.Nil {
@@ -58,9 +55,6 @@ func (h *MeHandler) WeeklySummary(c fiber.Ctx) error {
 	return c.JSON(res)
 }
 
-// SetEventCategory — PATCH /api/v1/me/events/:id/category
-// Меняет категорию своей встречи. Принимает пустую строку → сбрасывает в NULL,
-// тогда при следующем подсчёте «куда уходит время» GigaChat пере-классифицирует.
 type setEventCategoryRequest struct {
 	Category string `json:"category"`
 }
@@ -78,7 +72,6 @@ func (h *MeHandler) SetEventCategory(c fiber.Ctx) error {
 	if err := json.Unmarshal(c.Body(), &req); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
 	}
-	// Валидация: либо пусто (сброс), либо одно из канонических значений.
 	if req.Category != "" && !slices.Contains(service.TimeBreakdownCategories, req.Category) {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid category")
 	}
@@ -91,13 +84,10 @@ func (h *MeHandler) SetEventCategory(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ok": true, "category": req.Category})
 }
 
-// setEventTitleRequest — body для PATCH /me/events/:id/title.
 type setEventTitleRequest struct {
 	Title string `json:"title"`
 }
 
-// SetEventTitle — переименовывает событие текущего сотрудника. Только своё
-// (employee_id из JWT). Пустое название отклоняем.
 func (h *MeHandler) SetEventTitle(c fiber.Ctx) error {
 	empID := middleware.EmployeeID(c)
 	if empID == uuid.Nil {
@@ -127,9 +117,6 @@ func (h *MeHandler) SetEventTitle(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ok": true, "title": title})
 }
 
-// Events — GET /api/v1/me/events?from=...&to=...
-// События календаря текущего сотрудника за диапазон. По умолчанию — последние
-// 7 дней + следующие 7 дней.
 func (h *MeHandler) Events(c fiber.Ctx) error {
 	empID := middleware.EmployeeID(c)
 	if empID == uuid.Nil {
@@ -176,12 +163,10 @@ func (h *MeHandler) Get(c fiber.Ctx) error {
 		dto := EmployeeToDTO(*emp)
 		resp.Employee = &dto
 
-		// активный профиль
 		if wp, err := h.profiles.Active(c.Context(), emp.ID); err == nil && wp != nil {
 			p := ProfileToDTO(*wp)
 			resp.WorkProfile = &p
 		}
-		// будущие исключения (от сейчас + 30 дней назад)
 		from := time.Now().AddDate(0, 0, -30)
 		exs, err := h.exception.List(c.Context(), emp.ID, from, time.Time{})
 		if err == nil {
@@ -194,13 +179,10 @@ func (h *MeHandler) Get(c fiber.Ctx) error {
 	return c.JSON(resp)
 }
 
-// WithTelegramBotUsername — DI чтобы /api/v1/me/telegram отдавал deeplink.
 func (h *MeHandler) WithTelegramBotUsername(name string) *MeHandler {
 	h.tgBotUsername = name
 	return h
 }
-
-// --- Каналы уведомлений: email / telegram ---
 
 type notificationPrefsResponse struct {
 	EmailNotifications    bool     `json:"email_notifications"`
@@ -210,18 +192,17 @@ type notificationPrefsResponse struct {
 	NotifyMinPriority     string   `json:"notify_min_priority"`
 }
 
-// NotificationPrefs — GET текущие настройки каналов.
 func (h *MeHandler) NotificationPrefs(c fiber.Ctx) error {
 	uid := middleware.UserID(c)
 	if uid == uuid.Nil {
 		return fiber.NewError(fiber.StatusUnauthorized, "no user")
 	}
 	var (
-		emailOn  bool
-		tgOn     bool
-		tgChat   *string
-		kinds    []string
-		minPrio  string
+		emailOn bool
+		tgOn    bool
+		tgChat  *string
+		kinds   []string
+		minPrio string
 	)
 	if err := h.pool.QueryRow(c.Context(), `
 		SELECT email_notifications, telegram_notifications, telegram_chat_id,
@@ -242,7 +223,6 @@ func (h *MeHandler) NotificationPrefs(c fiber.Ctx) error {
 	})
 }
 
-// UpdateNotificationPrefs — PATCH каналы / типы / минимальный приоритет.
 type notificationPrefsRequest struct {
 	EmailNotifications    *bool     `json:"email_notifications,omitempty"`
 	TelegramNotifications *bool     `json:"telegram_notifications,omitempty"`
@@ -284,7 +264,6 @@ func (h *MeHandler) UpdateNotificationPrefs(c fiber.Ctx) error {
 	return h.NotificationPrefs(c)
 }
 
-// TelegramStatus — GET статуса + deeplink.
 type telegramStatusResponse struct {
 	Linked      bool   `json:"linked"`
 	BotUsername string `json:"bot_username,omitempty"`
@@ -310,18 +289,10 @@ func (h *MeHandler) TelegramStatus(c fiber.Ctx) error {
 	return c.JSON(resp)
 }
 
-// updateEmailRequest — body для PATCH /me/email.
 type updateEmailRequest struct {
 	Email string `json:"email"`
 }
 
-// UpdateEmail — меняет email текущего пользователя. Email — это же логин;
-// после смены логиниться нужно по новому. Подтверждения паролем не требуем
-// (по продуктовому решению — для хакатона достаточно).
-//
-// Валидация:
-//   - формат через простую регулярку.
-//   - 409 если занят другим пользователем.
 func (h *MeHandler) UpdateEmail(c fiber.Ctx) error {
 	uid := middleware.UserID(c)
 	if uid == uuid.Nil {
@@ -347,8 +318,6 @@ func (h *MeHandler) UpdateEmail(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ok": true, "email": email})
 }
 
-// looksLikeEmail — простейшая проверка формата. Не RFC-точная,
-// но отсекает явно битые строки. Для серьёзной валидации — отдельный модуль.
 func looksLikeEmail(s string) bool {
 	if len(s) < 3 || len(s) > 254 {
 		return false
@@ -369,7 +338,6 @@ func looksLikeEmail(s string) bool {
 	return true
 }
 
-// TelegramUnlink — DELETE привязки.
 func (h *MeHandler) TelegramUnlink(c fiber.Ctx) error {
 	uid := middleware.UserID(c)
 	if uid == uuid.Nil {

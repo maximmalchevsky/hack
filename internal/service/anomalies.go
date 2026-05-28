@@ -1,9 +1,3 @@
-// Package service — AnomaliesService: ищет аномальную дневную активность
-// сотрудников (z-score по числу событий за день).
-//
-// Идея: для каждого сотрудника берём 30 дней назад. Считаем среднее и
-// стандартное отклонение events_per_day. Если в каком-то дне z-score > 2 —
-// это аномалия. Покрывает кейс №3, §13 «выявление аномальной активности».
 package service
 
 import (
@@ -22,30 +16,26 @@ func NewAnomaliesService(pool *pgxpool.Pool) *AnomaliesService {
 	return &AnomaliesService{pool: pool}
 }
 
-// Anomaly — одна аномалия по дню.
 type Anomaly struct {
 	EmployeeID string    `json:"employee_id"`
 	FullName   string    `json:"full_name"`
 	Department string    `json:"department,omitempty"`
 	Day        time.Time `json:"day"`
-	Events     int       `json:"events"`     // фактическое значение
-	Mean       float64   `json:"mean"`       // среднее за 30 дней
-	StdDev     float64   `json:"std_dev"`    // стандартное отклонение
-	ZScore     float64   `json:"z_score"`    // (events − mean) / stddev
-	TimesMean  float64   `json:"times_mean"` // events / mean, для UI «в 3 раза больше»
+	Events     int       `json:"events"`
+	Mean       float64   `json:"mean"`
+	StdDev     float64   `json:"std_dev"`
+	ZScore     float64   `json:"z_score"`
+	TimesMean  float64   `json:"times_mean"`
 }
 
-// Detect — собирает аномалии за последние 30 дней.
-// Порог: z > 2 и events >= 3 (защита от шума при mean=0.1).
 func (s *AnomaliesService) Detect(ctx context.Context) ([]Anomaly, error) {
 	const days = 30
 	const zThreshold = 2.0
 	const minEvents = 3
 
-	to := time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, 1)
+	to := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, 1)
 	from := to.AddDate(0, 0, -days)
 
-	// За один запрос — counts событий по (employee_id, day).
 	rows, err := s.pool.Query(ctx, `
 		SELECT ce.employee_id,
 		       u.full_name,
@@ -100,10 +90,8 @@ func (s *AnomaliesService) Detect(ctx context.Context) ([]Anomaly, error) {
 	out := []Anomaly{}
 	for empID, d := range byEmp {
 		if len(d.points) < 5 {
-			// слишком мало точек — статистика не имеет смысла.
 			continue
 		}
-		// mean + std
 		var sum, sumSq float64
 		for _, p := range d.points {
 			sum += float64(p.events)
@@ -117,7 +105,6 @@ func (s *AnomaliesService) Detect(ctx context.Context) ([]Anomaly, error) {
 		}
 		std := math.Sqrt(variance)
 		if std < 0.5 {
-			// слишком плоское распределение — пропускаем.
 			continue
 		}
 
@@ -147,7 +134,6 @@ func (s *AnomaliesService) Detect(ctx context.Context) ([]Anomaly, error) {
 		}
 	}
 
-	// Сортировка: сначала самые «жирные» (z DESC), потом по дате DESC.
 	for i := 1; i < len(out); i++ {
 		for j := i; j > 0; j-- {
 			a, b := out[j-1], out[j]

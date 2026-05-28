@@ -12,9 +12,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// ResponseCache — кэш LLM-ответов в Redis на 5 минут.
-// Ключ: ai:resp:<sha256(messages+model)>
-// Снижает расход токенов на повторные запросы (например, при перезагрузке UI).
 type ResponseCache struct {
 	rdb *redis.Client
 	ttl time.Duration
@@ -27,7 +24,6 @@ func NewResponseCache(rdb *redis.Client) *ResponseCache {
 	}
 }
 
-// HashRequest — детерминированный ключ от CompletionRequest.
 func HashRequest(req CompletionRequest, model string) string {
 	type stableMsg struct {
 		Role, Content string
@@ -84,7 +80,6 @@ func (c *ResponseCache) Set(ctx context.Context, key string, resp CompletionResp
 	_ = c.rdb.Set(ctx, key, raw, c.ttl).Err()
 }
 
-// CachedClient — обёртка над Client с автоматическим кэшированием Complete.
 type CachedClient struct {
 	inner Client
 	cache *ResponseCache
@@ -115,9 +110,7 @@ func (c *CachedClient) Complete(ctx context.Context, req CompletionRequest) (*Co
 }
 
 func (c *CachedClient) Stream(ctx context.Context, req StreamRequest) (<-chan StreamChunk, error) {
-	// Streaming не кэшируем — нет смысла.
 	return c.inner.Stream(ctx, req)
 }
 
-// silence unused
 var _ = fmt.Sprintf

@@ -16,7 +16,6 @@ import (
 	"worktimesync/internal/repository"
 )
 
-// RecommendationService — генерация + хранение рекомендаций.
 type RecommendationService struct {
 	pool        *pgxpool.Pool
 	repo        *repository.RecommendationRepo
@@ -47,24 +46,16 @@ func (s *RecommendationService) List(ctx context.Context, employeeID uuid.UUID, 
 	return s.repo.ListByEmployee(ctx, employeeID, statuses, 50)
 }
 
-// Scope — диапазон видимости рекомендаций для одного запроса.
 type Scope string
 
 const (
-	ScopeMine Scope = "mine" // только свои
-	ScopeTeam Scope = "team" // подчинённые (для manager)
-	ScopeAll  Scope = "all"  // вся компания (для hr/admin/analyst)
+	ScopeMine Scope = "mine"
+	ScopeTeam Scope = "team"
+	ScopeAll  Scope = "all"
 )
 
-// ErrScopeForbidden — попытка запросить недоступный scope с ролью без прав.
 var ErrScopeForbidden = errors.New("recommendations: scope forbidden for this role")
 
-// ListForViewer — возвращает рекомендации согласно scope и роли.
-//
-// RBAC:
-//   - mine — доступен всем
-//   - team — только manager/hr/pm/admin
-//   - all  — только hr/admin/analyst
 func (s *RecommendationService) ListForViewer(
 	ctx context.Context,
 	viewerEmpID uuid.UUID,
@@ -107,7 +98,6 @@ func (s *RecommendationService) Apply(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-// Snooze — отложить рекомендацию на N дней. По умолчанию — 7.
 func (s *RecommendationService) Snooze(ctx context.Context, id uuid.UUID, days int) error {
 	if days <= 0 {
 		days = 7
@@ -128,7 +118,6 @@ func (s *RecommendationService) Dismiss(ctx context.Context, id uuid.UUID) error
 	return err
 }
 
-// Generate — собирает snapshot (с реальными A/C/L), дёргает recommender и сохраняет.
 func (s *RecommendationService) Generate(ctx context.Context, employeeID uuid.UUID) ([]domain.Recommendation, error) {
 	snap, err := s.empSnapshot(ctx, employeeID)
 	if err != nil {
@@ -164,10 +153,6 @@ func (s *RecommendationService) Generate(ctx context.Context, employeeID uuid.UU
 	return out, nil
 }
 
-// ComputeMetrics — отдельная функция: считает метрики без вызова recommender'а.
-// Используется хендлером /metrics/employee/:id.
-// Кэширует результат в Redis на 15 минут + при каждом РЕАЛЬНОМ пересчёте
-// (без cache hit) пишет snapshot в БД для исторической аналитики и /analytics.
 func (s *RecommendationService) ComputeMetrics(ctx context.Context, employeeID uuid.UUID) (ai.Metrics, error) {
 	if s.cache != nil {
 		if cached, ok := s.cache.Get(ctx, employeeID); ok {
@@ -185,22 +170,16 @@ func (s *RecommendationService) ComputeMetrics(ctx context.Context, employeeID u
 	return snap.Metrics, nil
 }
 
-// persistSnapshot — пишет одну строку в metrics_snapshots. Лучше делать best-effort:
-// currentWeekRange — [Пн 00:00 текущей недели, след. Пн 00:00) в UTC.
-// Ровно 7 дней. Используется как окно метрик C/L/Z/H, чтобы они совпадали
-// с heatmap «Моя неделя» на /workload.
 func currentWeekRange(now time.Time) (time.Time, time.Time) {
 	wd := int(now.Weekday())
 	if wd == 0 {
-		wd = 7 // воскресенье → 7-й день недели
+		wd = 7
 	}
 	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).
 		AddDate(0, 0, -(wd - 1))
 	return from, from.AddDate(0, 0, 7)
 }
 
-// если запись упала, метрика всё равно отдана клиенту (и закэширована в Redis).
-// period — текущая календарная неделя (Пн—Вс), окно по умолчанию для C/L/Z.
 func (s *RecommendationService) persistSnapshot(ctx context.Context, employeeID uuid.UUID, m ai.Metrics) {
 	now := time.Now().UTC()
 	periodStart, _ := currentWeekRange(now)
@@ -213,7 +192,6 @@ func (s *RecommendationService) persistSnapshot(ctx context.Context, employeeID 
 	`, employeeID, periodStart, now, m.A, m.C, m.L, m.Z, m.H, m.R)
 }
 
-// InvalidateMetrics — вызывается из service'ов, меняющих профиль/события/исключения.
 func (s *RecommendationService) InvalidateMetrics(ctx context.Context, employeeID uuid.UUID) {
 	if s.cache != nil {
 		s.cache.Invalidate(ctx, employeeID)
@@ -264,10 +242,6 @@ func (s *RecommendationService) empSnapshot(ctx context.Context, employeeID uuid
 	}
 	snap.LastProfileUpdateDaysAgo = daysAgo
 
-	// Реальные метрики A/C/L — за ТЕКУЩУЮ календарную неделю (Пн 00:00 — Вс 24:00).
-	// Раньше окно было [-30, +7] дней: знаменатель Load (рабочие часы за ~37 дней)
-	// раздувался пустыми прошлыми днями, и L/C не совпадали с heatmap «Моя неделя»,
-	// который показывает именно текущую неделю. Сужено до недели для консистентности.
 	now := time.Now().UTC()
 	from, to := currentWeekRange(now)
 
@@ -277,7 +251,6 @@ func (s *RecommendationService) empSnapshot(ctx context.Context, employeeID uuid
 		To:         to,
 	})
 	if err != nil {
-		// не валим snapshot, считаем без событий
 		events = nil
 	}
 
@@ -313,7 +286,6 @@ func (s *RecommendationService) empSnapshot(ctx context.Context, employeeID uuid
 		R: round4(R),
 	}
 
-	// Добавим top-5 событий вне графика — для evidence.
 	if profile != nil {
 		outliers := topOutOfSchedule(events, profile, excs, 5)
 		for _, ev := range outliers {
@@ -341,7 +313,6 @@ func round4(v float64) float64 {
 	return float64(int(v*10000)) / 10000
 }
 
-// topOutOfSchedule — топ-N событий вне рабочего профиля и не в исключении.
 func topOutOfSchedule(events []domain.CalendarEvent, profile *domain.WorkProfile, excs []domain.TimeException, n int) []domain.CalendarEvent {
 	if profile == nil {
 		return nil
@@ -369,7 +340,6 @@ func topOutOfSchedule(events []domain.CalendarEvent, profile *domain.WorkProfile
 	return out
 }
 
-// мини-копии helpers, чтобы не плодить экспорт в пакете analytics.
 func analyticsInsideWorkHours(ev domain.CalendarEvent, profile *domain.WorkProfile, loc *time.Location) bool {
 	start := ev.StartAt.In(loc)
 	end := ev.EndAt.In(loc)

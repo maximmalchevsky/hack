@@ -39,7 +39,6 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	// --- Postgres ---
 	dbCtx, dbCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer dbCancel()
 
@@ -58,7 +57,6 @@ func main() {
 		log.Fatal().Err(err).Msg("postgres: ping")
 	}
 
-	// --- Redis ---
 	redisOpts, err := redis.ParseURL(cfg.Redis.URL)
 	if err != nil {
 		log.Fatal().Err(err).Msg("redis: parse url")
@@ -73,13 +71,11 @@ func main() {
 		log.Fatal().Err(err).Msg("redis: ping")
 	}
 
-	// --- Crypto (нужно для расшифровки токенов интеграций) ---
 	cipher, err := crypto.NewFromBase64(cfg.App.EncryptionKey)
 	if err != nil {
 		log.Fatal().Err(err).Msg("crypto: init")
 	}
 
-	// --- Services ---
 	syncSvc := service.NewSyncService(db, cipher)
 	if cfg.OAuth.YandexClientID != "" && cfg.OAuth.YandexClientSecret != "" {
 		syncSvc.WithYandex(yandex.New(yandex.Config{
@@ -91,7 +87,7 @@ func main() {
 	lockMgr := locks.NewManager(rdb)
 
 	hrRoadmapSvc := service.NewHRRoadmapService(db)
-	// Транспорты доп. каналов: email + telegram. Если не настроены — отключатся сами.
+
 	emailTransport := notify.NewEmailTransport(
 		cfg.SMTP.Host, cfg.SMTP.Port,
 		cfg.SMTP.User, cfg.SMTP.Pass,
@@ -103,7 +99,6 @@ func main() {
 	notificationSvc := service.NewNotificationService(db, rdb).
 		WithTransports(emailTransport, telegramTransport)
 
-	// --- AI (опционально) ---
 	var llm ai.Client
 	if cfg.GigaChat.ClientID != "" && cfg.GigaChat.ClientSecret != "" {
 		gc, err := ai.NewGigaChat(ai.GigaChatConfig{
@@ -124,7 +119,6 @@ func main() {
 
 	smartNotifier := notifier.NewSmartNotifier(db, hrRoadmapSvc, notificationSvc, llm, log)
 
-	// --- Recommendation pipeline (та же конфигурация, что в API) ---
 	rules := ai.NewRuleBased(cfg.Risk.FreshnessDDays)
 	recommender := ai.NewRecommender(llm, rules, log)
 	weights := analytics.Weights{
@@ -142,7 +136,6 @@ func main() {
 	taskEstimator := ai.NewTaskEstimator(llm)
 	taskPlannerSvc := service.NewTaskPlannerService(db, taskEstimator)
 
-	// --- Asynq ---
 	asynqRedis := asynq.RedisClientOpt{
 		Addr:     redisOpts.Addr,
 		Password: cfg.Redis.Password,
@@ -178,7 +171,6 @@ func main() {
 	})
 	h.Register(mux)
 
-	// Telegram-бот (long-polling). Если токен не задан — bot == nil и горутина не запускается.
 	pulseSvc := service.NewPulseService(db)
 	if tgBot, err := notify.NewBot(cfg.Telegram.BotToken, db, log); err != nil {
 		log.Warn().Err(err).Msg("telegram bot init failed")
@@ -187,7 +179,6 @@ func main() {
 		go tgBot.Run(ctx)
 	}
 
-	// iMIP IMAP-poller. Если IMIP_ENABLED=false или IMAP-креды пустые — не стартуем.
 	if cfg.IMIP.Enabled && cfg.IMIP.IMAPHost != "" && cfg.IMIP.IMAPUser != "" {
 		poller := imip.NewPoller(imip.PollerConfig{
 			Host:         cfg.IMIP.IMAPHost,

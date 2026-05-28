@@ -9,23 +9,19 @@ import (
 	"github.com/hibiken/asynq"
 )
 
-// Enqueuer — обёртка над asynq.Client для типобезопасного создания задач.
-// Используется handler'ами API при изменении данных, требующих фоновой обработки.
 type Enqueuer struct {
 	client *asynq.Client
 }
 
 func NewEnqueuer(c *asynq.Client) *Enqueuer { return &Enqueuer{client: c} }
 
-// SyncPayload — нагрузка задач sync:incremental / sync:backfill.
 type SyncPayload struct {
 	IntegrationID uuid.UUID `json:"integration_id"`
 }
 
-// EnqueueSyncIncremental — поставить задачу инкрементальной синхронизации.
 func (e *Enqueuer) EnqueueSyncIncremental(integrationID uuid.UUID) error {
 	if e.client == nil {
-		return nil // в тестах без Asynq просто игнорируем
+		return nil
 	}
 	body, err := json.Marshal(SyncPayload{IntegrationID: integrationID})
 	if err != nil {
@@ -40,7 +36,6 @@ func (e *Enqueuer) EnqueueSyncIncremental(integrationID uuid.UUID) error {
 	return err
 }
 
-// EnqueueSyncBackfill — первичная загрузка (после connect).
 func (e *Enqueuer) EnqueueSyncBackfill(integrationID uuid.UUID) error {
 	if e.client == nil {
 		return nil
@@ -58,7 +53,6 @@ func (e *Enqueuer) EnqueueSyncBackfill(integrationID uuid.UUID) error {
 	return err
 }
 
-// MetricsRecomputePayload — нагрузка для recompute.
 type MetricsRecomputePayload struct {
 	EmployeeID uuid.UUID `json:"employee_id"`
 }
@@ -80,9 +74,6 @@ func (e *Enqueuer) EnqueueMetricsRecompute(employeeID uuid.UUID) error {
 	return err
 }
 
-// EnqueueTasksReplanOne — пересчитать план задач одного сотрудника.
-// Дёргается при изменении профиля / исключений, чтобы старые task blocks
-// на нерабочих днях были удалены и план расположился по актуальному графику.
 func (e *Enqueuer) EnqueueTasksReplanOne(employeeID uuid.UUID) error {
 	if e.client == nil {
 		return nil
@@ -100,13 +91,10 @@ func (e *Enqueuer) EnqueueTasksReplanOne(employeeID uuid.UUID) error {
 	return err
 }
 
-// AIRecommendPayload — нагрузка для ai:recommend (всегда employee_id).
 type AIRecommendPayload struct {
 	EmployeeID uuid.UUID `json:"employee_id"`
 }
 
-// EnqueueAIRecommend — фоновая генерация рекомендаций для одного сотрудника.
-// Ставим через 30 секунд после события: даём метрикам пересчитаться и осесть.
 func (e *Enqueuer) EnqueueAIRecommend(employeeID uuid.UUID) error {
 	if e.client == nil {
 		return nil
@@ -132,7 +120,6 @@ func (e *Enqueuer) Close() error {
 	return e.client.Close()
 }
 
-// MustNewEnqueuer создаёт enqueuer из конфигурации Redis. Паникует при ошибке.
 func MustNewEnqueuer(redisAddr, password string, db int) *Enqueuer {
 	c := asynq.NewClient(asynq.RedisClientOpt{
 		Addr:     redisAddr,

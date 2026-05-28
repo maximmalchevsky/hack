@@ -13,7 +13,6 @@ import (
 	"worktimesync/internal/domain"
 )
 
-// ExceptionRepo — отпуска, больничные, командировки.
 type ExceptionRepo struct {
 	pool *pgxpool.Pool
 }

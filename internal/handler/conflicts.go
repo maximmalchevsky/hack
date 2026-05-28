@@ -47,5 +47,4 @@ func (h *ConflictsHandler) byEmployee(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"conflicts": list})
 }
 
-// silence unused
 var _ = time.Time{}

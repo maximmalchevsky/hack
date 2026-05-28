@@ -61,7 +61,6 @@ func (r *RecommendationRepo) Create(ctx context.Context, in CreateRecommendation
 	return scanRecommendation(row)
 }
 
-// ListByEmployee — рекомендации сотрудника с фильтром по статусу.
 func (r *RecommendationRepo) ListByEmployee(ctx context.Context, employeeID uuid.UUID, statuses []domain.RecommendationStatus, limit int) ([]domain.Recommendation, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -104,7 +103,6 @@ func (r *RecommendationRepo) ListByEmployee(ctx context.Context, employeeID uuid
 	return out, rows.Err()
 }
 
-// ListAll — все рекомендации (для HR/admin/analyst).
 func (r *RecommendationRepo) ListAll(ctx context.Context, statuses []domain.RecommendationStatus, limit int) ([]domain.Recommendation, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
@@ -146,8 +144,6 @@ func (r *RecommendationRepo) ListAll(ctx context.Context, statuses []domain.Reco
 	return out, rows.Err()
 }
 
-// ListByManager — рекомендации подчинённых указанного руководителя.
-// Подчинённые = employees, у которых manager_id = managerEmployeeID.
 func (r *RecommendationRepo) ListByManager(ctx context.Context, managerEmployeeID uuid.UUID, statuses []domain.RecommendationStatus, limit int) ([]domain.Recommendation, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
@@ -191,7 +187,6 @@ func (r *RecommendationRepo) ListByManager(ctx context.Context, managerEmployeeI
 	return out, rows.Err()
 }
 
-// Snooze — отложить рекомендацию до указанного момента (она не будет показываться в List).
 func (r *RecommendationRepo) Snooze(ctx context.Context, id uuid.UUID, until time.Time) error {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE recommendations SET snoozed_until = $2 WHERE id = $1
@@ -205,7 +200,6 @@ func (r *RecommendationRepo) Snooze(ctx context.Context, id uuid.UUID, until tim
 	return nil
 }
 
-// SetStatus — apply / dismiss / seen.
 func (r *RecommendationRepo) SetStatus(ctx context.Context, id uuid.UUID, status domain.RecommendationStatus) error {
 	tag, err := r.pool.Exec(ctx, `
 		UPDATE recommendations SET status = $2 WHERE id = $1
@@ -219,7 +213,6 @@ func (r *RecommendationRepo) SetStatus(ctx context.Context, id uuid.UUID, status
 	return nil
 }
 
-// DeleteByEmployee — очищает старые рекомендации перед новой генерацией.
 func (r *RecommendationRepo) DeleteByEmployee(ctx context.Context, employeeID uuid.UUID) error {
 	_, err := r.pool.Exec(ctx, `
 		DELETE FROM recommendations WHERE employee_id = $1 AND status = 'new'
@@ -245,8 +238,6 @@ func (r *RecommendationRepo) ByID(ctx context.Context, id uuid.UUID) (*domain.Re
 	return rec, nil
 }
 
-// --- helpers ---
-
 func nullJSONb(b []byte) any {
 	if len(b) == 0 {
 		return nil
@@ -263,10 +254,10 @@ func statusStrsOrNil(ss []string) any {
 
 func scanRecommendation(s rowScanner) (*domain.Recommendation, error) {
 	var (
-		rec       domain.Recommendation
-		priority  string
-		status    string
-		evidence  string
+		rec      domain.Recommendation
+		priority string
+		status   string
+		evidence string
 	)
 	if err := s.Scan(
 		&rec.ID, &rec.EmployeeID, &rec.TeamID, &rec.Kind, &priority,

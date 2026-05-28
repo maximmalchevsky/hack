@@ -11,7 +11,6 @@ import (
 	"worktimesync/internal/analytics"
 )
 
-// DiagnosticsService — группировка сотрудников для модуля «Диагностика».
 type DiagnosticsService struct {
 	pool *pgxpool.Pool
 }
@@ -20,25 +19,22 @@ func NewDiagnosticsService(pool *pgxpool.Pool) *DiagnosticsService {
 	return &DiagnosticsService{pool: pool}
 }
 
-// DiagnosticsRow — один сотрудник в диагностике.
 type DiagnosticsRow struct {
-	EmployeeID          string     `json:"employee_id"`
-	FullName            string     `json:"full_name"`
-	Department          string     `json:"department,omitempty"`
-	Role                string     `json:"role"`
-	Timezone            string     `json:"timezone,omitempty"`
-	HRWorkFormat        *string    `json:"hr_work_format,omitempty"`
-	LastProfileUpdateAt *time.Time `json:"last_profile_update_at,omitempty"`
-	DaysSinceUpdate     int        `json:"days_since_update"`
-	Freshness           float64    `json:"freshness"`
-	Group               string     `json:"group"` // fresh | stale | needs_confirm | unknown
-	// Ближайшее отсутствие в следующие 14 дней (отпуск/больничный/командировка).
-	UpcomingException     *string    `json:"upcoming_exception,omitempty"`      // kind: vacation/sick_leave/business_trip/...
-	UpcomingExceptionAt   *time.Time `json:"upcoming_exception_at,omitempty"`   // start_at
-	UpcomingExceptionDays int        `json:"upcoming_exception_days,omitempty"` // дней до начала
+	EmployeeID            string     `json:"employee_id"`
+	FullName              string     `json:"full_name"`
+	Department            string     `json:"department,omitempty"`
+	Role                  string     `json:"role"`
+	Timezone              string     `json:"timezone,omitempty"`
+	HRWorkFormat          *string    `json:"hr_work_format,omitempty"`
+	LastProfileUpdateAt   *time.Time `json:"last_profile_update_at,omitempty"`
+	DaysSinceUpdate       int        `json:"days_since_update"`
+	Freshness             float64    `json:"freshness"`
+	Group                 string     `json:"group"`
+	UpcomingException     *string    `json:"upcoming_exception,omitempty"`
+	UpcomingExceptionAt   *time.Time `json:"upcoming_exception_at,omitempty"`
+	UpcomingExceptionDays int        `json:"upcoming_exception_days,omitempty"`
 }
 
-// Groups — структура результата.
 type Groups struct {
 	Fresh        []DiagnosticsRow `json:"fresh"`
 	Stale        []DiagnosticsRow `json:"stale"`
@@ -47,7 +43,6 @@ type Groups struct {
 	Total        int              `json:"total"`
 }
 
-// Build — собирает все группы за один запрос.
 func (s *DiagnosticsService) Build(ctx context.Context) (*Groups, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT e.id, u.full_name, COALESCE(e.department, ''), u.role,
@@ -72,8 +67,6 @@ func (s *DiagnosticsService) Build(ctx context.Context) (*Groups, error) {
 	}
 	defer rows.Close()
 
-	// Инициализируем пустыми слайсами — иначе JSON marshal отдаст `null` вместо `[]`,
-	// и фронт упадёт на .length.
 	g := &Groups{
 		Fresh:        []DiagnosticsRow{},
 		Stale:        []DiagnosticsRow{},
@@ -130,38 +123,29 @@ func (s *DiagnosticsService) Build(ctx context.Context) (*Groups, error) {
 	return g, rows.Err()
 }
 
-// --- Burnout-детектор (кейс №3, §13) ---
-
-// BurnoutRow — сотрудник-кандидат на выгорание.
-// Критерий: в каждой из ПОСЛЕДНИХ 2 ПОЛНЫХ НЕДЕЛЬ хотя бы одно из:
-//   - L (загрузка) > 0.85
-//   - C (доля встреч вне графика) > 0.3
 type BurnoutRow struct {
 	EmployeeID string   `json:"employee_id"`
 	FullName   string   `json:"full_name"`
 	Department string   `json:"department,omitempty"`
 	Role       string   `json:"role"`
-	L1         float64  `json:"l1"`       // Load неделя −2..−1
-	L2         float64  `json:"l2"`       // Load неделя −1..сейчас
-	C1         float64  `json:"c1"`       // Conflict-ratio той же недели
-	C2         float64  `json:"c2"`       // Conflict-ratio той же недели
-	Reasons    []string `json:"reasons"`  // человеко-читаемые причины
+	L1         float64  `json:"l1"`
+	L2         float64  `json:"l2"`
+	C1         float64  `json:"c1"`
+	C2         float64  `json:"c2"`
+	Reasons    []string `json:"reasons"`
 }
 
-// Burnout — сотрудники в зоне выгорания. conflictsSvc нужен для подсчёта
-// C-метрики (события вне рабочего графика, с учётом TZ профиля).
 func (s *DiagnosticsService) Burnout(
 	ctx context.Context,
 	conflictsSvc *ConflictsService,
 ) ([]BurnoutRow, error) {
 	now := time.Now().UTC()
-	weekStart2 := startOfWeek(now)            // понедельник текущей недели — начало «второй» недели
-	weekStart1 := weekStart2.AddDate(0, 0, -7) // начало «первой» недели = понедельник прошлой
-	weekEnd2 := weekStart2.AddDate(0, 0, 7)    // конец «второй» = следующий понедельник
+	weekStart2 := startOfWeek(now)
+	weekStart1 := weekStart2.AddDate(0, 0, -7)
+	weekEnd2 := weekStart2.AddDate(0, 0, 7)
 	periodStart := weekStart1
 	periodEnd := weekEnd2
 
-	// 1. Сотрудники + days_of_week.
 	rows, err := s.pool.Query(ctx, `
 		SELECT e.id, u.full_name, COALESCE(e.department, ''), u.role,
 		       COALESCE(wp.days_of_week::text, '{}')::bytea
@@ -179,7 +163,7 @@ func (s *DiagnosticsService) Burnout(
 		fullName   string
 		department string
 		role       string
-		weekMin    int // сумма минут в неделю по профилю
+		weekMin    int
 	}
 	emps := []emp{}
 	for rows.Next() {
@@ -200,10 +184,9 @@ func (s *DiagnosticsService) Burnout(
 		return nil, err
 	}
 
-	// 2. Занятые минуты + кол-во событий по каждой неделе и каждому emp.
 	type busyKey struct {
 		emp  uuid.UUID
-		week int // 1 или 2
+		week int
 	}
 	busy := map[busyKey]float64{}
 	evCnt := map[busyKey]int{}
@@ -242,7 +225,6 @@ func (s *DiagnosticsService) Burnout(
 		}
 	}
 
-	// 3. Конфликты (события вне графика) по каждой неделе и каждому emp.
 	outCnt := map[busyKey]int{}
 	for _, e := range emps {
 		list, err := conflictsSvc.ListByEmployee(ctx, e.id, periodStart, periodEnd)
@@ -258,7 +240,6 @@ func (s *DiagnosticsService) Burnout(
 		}
 	}
 
-	// 4. Считаем L и C, фильтруем кандидатов.
 	out := []BurnoutRow{}
 	for _, e := range emps {
 		if e.weekMin <= 0 {
@@ -303,7 +284,6 @@ func (s *DiagnosticsService) Burnout(
 	return out, nil
 }
 
-// startOfWeek — понедельник 00:00 UTC в неделе d.
 func startOfWeek(d time.Time) time.Time {
 	wd := int(d.Weekday())
 	if wd == 0 {

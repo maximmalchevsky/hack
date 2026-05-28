@@ -6,7 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// RecommendationStatus — статус обработки рекомендации.
 type RecommendationStatus string
 
 const (
@@ -16,7 +15,6 @@ const (
 	RecStatusDismissed RecommendationStatus = "dismissed"
 )
 
-// RecommendationPriority — приоритет.
 type RecommendationPriority string
 
 const (
@@ -26,19 +24,18 @@ const (
 	PriorityCritical RecommendationPriority = "critical"
 )
 
-// Recommendation — объяснимая рекомендация (rule-based или AI).
 type Recommendation struct {
-	ID          uuid.UUID
-	EmployeeID  *uuid.UUID
-	TeamID      *uuid.UUID
-	Kind        string
-	Priority    RecommendationPriority
-	Title       string
-	Explanation string
-	PayloadJSON []byte
-	Status      RecommendationStatus
-	GeneratedBy string // "rule" | "ai"
+	ID           uuid.UUID
+	EmployeeID   *uuid.UUID
+	TeamID       *uuid.UUID
+	Kind         string
+	Priority     RecommendationPriority
+	Title        string
+	Explanation  string
+	PayloadJSON  []byte
+	Status       RecommendationStatus
+	GeneratedBy  string
 	EvidenceJSON []byte
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }

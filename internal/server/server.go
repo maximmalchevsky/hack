@@ -36,13 +36,12 @@ type Server struct {
 	redis *redis.Client
 	jwt   *auth.Manager
 
-	cipher      *crypto.Cipher
-	enqueuer    *workers.Enqueuer
-	llm         ai.Client
-	registry    *integrations.Registry
+	cipher   *crypto.Cipher
+	enqueuer *workers.Enqueuer
+	llm      ai.Client
+	registry *integrations.Registry
 }
 
-// Deps — все внешние зависимости сервера.
 type Deps struct {
 	Config   *config.Config
 	Log      zerolog.Logger
@@ -50,7 +49,7 @@ type Deps struct {
 	Redis    *redis.Client
 	Cipher   *crypto.Cipher
 	Enqueuer *workers.Enqueuer
-	LLM      ai.Client          // может быть nil — fallback на rules
+	LLM      ai.Client
 	Registry *integrations.Registry
 }
 
@@ -103,12 +102,10 @@ func (s *Server) registerRoutes() {
 		})
 	})
 
-	// --- Auth (публичная) ---
 	authSvc := service.NewAuthService(s.db, s.jwt)
 	authH := handler.NewAuthHandler(authSvc)
 	authH.Register(api.Group("/auth"))
 
-	// --- Сервисы домена ---
 	auditSvc := service.NewAuditService(s.db, s.log)
 	profileSvc := service.NewProfileService(s.db, auditSvc)
 	exceptionSvc := service.NewExceptionService(s.db)
@@ -128,8 +125,6 @@ func (s *Server) registerRoutes() {
 	teamSvc := service.NewTeamService(s.db)
 	chatCtxBuilder := service.NewChatContextBuilder(s.db, diagnosticsSvc, hrRoadmapSvc, teamSvc)
 	aiChatSvc := service.NewAIChatService(s.db, s.llm, chatCtxBuilder)
-	// Транспорты доп. каналов: email + telegram. Если не настроены —
-	// .Enabled()==false и они не добавятся.
 	emailTransport := notify.NewEmailTransport(
 		s.cfg.SMTP.Host, s.cfg.SMTP.Port,
 		s.cfg.SMTP.User, s.cfg.SMTP.Pass,
@@ -163,12 +158,10 @@ func (s *Server) registerRoutes() {
 	webhookSvc := service.NewWebhookService(s.db, s.registry, s.enqueuer)
 	adminSvc := service.NewAdminService(s.db)
 
-	// --- Handlers ---
 	meH := handler.NewMeHandler(s.db, profileSvc, exceptionSvc, weeklySummarySvc).
 		WithTelegramBotUsername(telegramUsernameIfActive(s.cfg.Telegram.BotToken, s.cfg.Telegram.BotUsername))
 	profileH := handler.NewProfileHandler(profileSvc, s.enqueuer)
 	exceptionH := handler.NewExceptionHandler(exceptionSvc, s.enqueuer)
-	// Yandex Calendar OAuth — опциональный (если в .env не задан client_id, передаём nil).
 	var yandexProv *yandex.Provider
 	if s.cfg.OAuth.YandexClientID != "" && s.cfg.OAuth.YandexClientSecret != "" {
 		yandexProv = yandex.New(yandex.Config{
@@ -177,7 +170,6 @@ func (s *Server) registerRoutes() {
 			RedirectURL:  s.cfg.OAuth.YandexRedirectURL,
 		})
 		s.registry.RegisterCalendar(yandexProv)
-		// Подключаем запись событий в Yandex Calendar в proposeMeeting-flow.
 		meetingProposalSvc.WithYandex(yandexProv, s.cipher)
 	}
 	integrationH := handler.NewIntegrationHandler(
@@ -206,13 +198,10 @@ func (s *Server) registerRoutes() {
 	viewPresetsH := handler.NewViewPresetsHandler(viewPresetsSvc)
 	teamDigestH := handler.NewTeamDigestHandler(teamDigestSvc, notificationSvc)
 
-	// --- Webhooks (без авторизации) ---
 	webhookH.Mount(api)
 
-	// --- Public OAuth callback (тоже без авторизации; идентификация через state). ---
 	integrationH.MountPublic(api)
 
-	// --- Защищённый префикс ---
 	authed := api.Group("/", middleware.AuthRequired(s.jwt))
 	authed.Get("/me", meH.Get)
 	authed.Get("/me/events", meH.Events)
@@ -255,7 +244,6 @@ func (s *Server) healthz(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"status": "ok"})
 }
 
-// swaggerUI отдаёт минимальный HTML с swagger-ui-dist из CDN, читающий /swagger/openapi.yaml.
 func (s *Server) swaggerUI(c fiber.Ctx) error {
 	c.Set("Content-Type", "text/html; charset=utf-8")
 	return c.SendString(`<!DOCTYPE html>
@@ -274,7 +262,6 @@ window.ui = SwaggerUIBundle({
 </body></html>`)
 }
 
-// openAPISpec отдаёт сам YAML.
 func (s *Server) openAPISpec(c fiber.Ctx) error {
 	data, err := openAPIYAML()
 	if err != nil {
@@ -342,9 +329,6 @@ func errorHandler(log zerolog.Logger) fiber.ErrorHandler {
 	}
 }
 
-// telegramUsernameIfActive — отдаём username только если бот реально запущен
-// (т.е. есть и токен, и имя). Иначе фронт нарисует «бот не настроен», вместо
-// неработающей кнопки «Подключить».
 func telegramUsernameIfActive(token, username string) string {
 	if token == "" || username == "" {
 		return ""

@@ -12,9 +12,6 @@ import (
 	"worktimesync/internal/service"
 )
 
-// TeamDigestHandler — POST /api/v1/admin/digest/trigger.
-// Дёргает сборку digest'ов прямо сейчас (для admin/тестов/демо). В проде
-// то же делает Asynq scheduler по понедельникам.
 type TeamDigestHandler struct {
 	svc           *service.TeamWeeklyDigestService
 	notifications *service.NotificationService

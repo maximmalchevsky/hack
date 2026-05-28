@@ -1,7 +1,3 @@
-// Package service — ForecastService: простой прогноз вероятности конфликтов
-// для каждого сотрудника. Идея: смотрим количество событий вне графика по
-// последним 4 неделям, считаем тренд через простую линейную регрессию.
-// Если slope > 0 и текущий уровень не нулевой — присваиваем «риск роста».
 package service
 
 import (
@@ -21,27 +17,23 @@ func NewForecastService(pool *pgxpool.Pool, conflicts *ConflictsService) *Foreca
 	return &ForecastService{pool: pool, conflicts: conflicts}
 }
 
-// ConflictForecast — прогноз по одному сотруднику.
 type ConflictForecast struct {
 	EmployeeID  string  `json:"employee_id"`
 	FullName    string  `json:"full_name"`
 	Department  string  `json:"department,omitempty"`
-	Weeks       []int   `json:"weeks"`        // конфликтов по 4 неделям [w-3, w-2, w-1, w]
-	Trend       float64 `json:"trend"`        // slope линейной регрессии
-	CurrentRate int     `json:"current_rate"` // текущая неделя
-	Risk        string  `json:"risk"`         // low | medium | high
-	Reason      string  `json:"reason"`       // человеко-читаемое объяснение
+	Weeks       []int   `json:"weeks"`
+	Trend       float64 `json:"trend"`
+	CurrentRate int     `json:"current_rate"`
+	Risk        string  `json:"risk"`
+	Reason      string  `json:"reason"`
 }
 
-// Build — собирает прогноз по всем сотрудникам.
-// Только тех, у кого Risk != low — фильтрация на стороне UI.
 func (s *ForecastService) Build(ctx context.Context) ([]ConflictForecast, error) {
 	const weeks = 4
 	now := time.Now().UTC()
 	periodStart := startOfWeek(now).AddDate(0, 0, -7*(weeks-1))
 	periodEnd := startOfWeek(now).AddDate(0, 0, 7)
 
-	// Список сотрудников.
 	rows, err := s.pool.Query(ctx, `
 		SELECT e.id, u.full_name, COALESCE(e.department, '')
 		FROM employees e
@@ -79,14 +71,12 @@ func (s *ForecastService) Build(ctx context.Context) ([]ConflictForecast, error)
 		buckets := make([]int, weeks)
 		for _, c := range conflicts {
 			diff := startOfWeek(c.StartAt).Sub(startOfWeek(now)).Hours() / (24 * 7)
-			// diff: 0 = текущая, -1 = прошлая, -2 = поза-прошлая, и т.д.
 			idx := weeks - 1 + int(diff)
 			if idx < 0 || idx >= weeks {
 				continue
 			}
 			buckets[idx]++
 		}
-		// linear regression slope
 		slope := linearSlope(buckets)
 		current := buckets[weeks-1]
 
@@ -118,7 +108,6 @@ func (s *ForecastService) Build(ctx context.Context) ([]ConflictForecast, error)
 		})
 	}
 
-	// Сортировка: high → medium, потом по current_rate DESC.
 	riskWeight := func(r string) int {
 		if r == "high" {
 			return 2
@@ -142,7 +131,6 @@ func (s *ForecastService) Build(ctx context.Context) ([]ConflictForecast, error)
 	return out, nil
 }
 
-// linearSlope — slope из least-squares для y = a + b*x при x=0..n-1.
 func linearSlope(y []int) float64 {
 	n := len(y)
 	if n < 2 {

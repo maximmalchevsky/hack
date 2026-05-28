@@ -6,8 +6,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// EmployeeSnapshot — компактная сводка по сотруднику для recommender'а.
-// Не зависит от пакетов domain/repository — чтобы AI-слой был самодостаточным.
 type EmployeeSnapshot struct {
 	Employee EmployeeRef `json:"employee"`
 
@@ -31,18 +29,17 @@ type EmployeeRef struct {
 type WorkProfileRef struct {
 	Timezone   string `json:"timezone"`
 	WorkFormat string `json:"work_format"`
-	// Описание дней в свободной форме, чтобы не тянуть структурированный JSON в промпт.
+
 	HoursSummary string `json:"hours_summary,omitempty"`
 }
 
-// Metrics — расчёты из internal/analytics.
 type Metrics struct {
-	A float64 `json:"A"` // freshness
-	C float64 `json:"C"` // conflicts ratio
-	L float64 `json:"L"` // load
-	Z float64 `json:"Z"` // tz drift
-	H float64 `json:"H"` // HR-calendar mismatch
-	R float64 `json:"R"` // integral risk
+	A float64 `json:"A"`
+	C float64 `json:"C"`
+	L float64 `json:"L"`
+	Z float64 `json:"Z"`
+	H float64 `json:"H"`
+	R float64 `json:"R"`
 }
 
 type EventRef struct {
@@ -58,7 +55,6 @@ type ExceptionRef struct {
 	EndAt   time.Time `json:"end_at"`
 }
 
-// Recommendation — результирующая рекомендация.
 type Recommendation struct {
 	Kind        string         `json:"kind"`
 	Priority    string         `json:"priority"`
@@ -66,5 +62,5 @@ type Recommendation struct {
 	Explanation string         `json:"explanation"`
 	AIEvidence  map[string]any `json:"ai_evidence,omitempty"`
 
-	GeneratedBy string `json:"generated_by"` // rule | ai
+	GeneratedBy string `json:"generated_by"`
 }

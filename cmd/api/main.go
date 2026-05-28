@@ -57,7 +57,6 @@ func main() {
 	}
 	log.Info().Msg("postgres: connected")
 
-	// --- Миграции (embedded) ---
 	if err := migrator.Up(db, log); err != nil {
 		log.Fatal().Err(err).Msg("migrator: up")
 	}
@@ -77,31 +76,24 @@ func main() {
 	}
 	log.Info().Msg("redis: connected")
 
-	// --- Asynq enqueuer (нужен и для bootstrap, и для handler'ов) ---
 	enq := workers.MustNewEnqueuer(redisOpts.Addr, cfg.Redis.Password, cfg.Redis.DB)
 	defer enq.Close()
 
-	// --- Bootstrap: создание admin + демо-данных при первом старте ---
-	// Передаём enqueuer, чтобы после первого seed'а событий автоматически
-	// поставить metrics:recompute + ai:recommend для всех сотрудников.
 	if err := bootstrap.Run(dbCtx, db, enq, log); err != nil {
 		log.Warn().Err(err).Msg("bootstrap: skipped with errors")
 	}
 
-	// --- Crypto ---
 	cipher, err := crypto.NewFromBase64(cfg.App.EncryptionKey)
 	if err != nil {
 		log.Fatal().Err(err).Msg("crypto: init")
 	}
 
-	// --- Provider registry ---
 	registry := integrations.NewRegistry()
 	registry.RegisterCalendar(ical.New())
 	registry.RegisterCalendar(caldav.New())
 	registry.RegisterTracker(jira.New())
 	registry.RegisterTracker(yandextracker.New())
 
-	// --- AI (опционально — если GigaChat не настроен, llm = nil) ---
 	var llm ai.Client
 	if cfg.GigaChat.ClientID != "" && cfg.GigaChat.ClientSecret != "" {
 		gcfg := ai.GigaChatConfig{
@@ -124,7 +116,6 @@ func main() {
 		log.Info().Msg("gigachat: not configured, using rule-based recommender")
 	}
 
-	// --- HTTP server ---
 	srv := server.New(server.Deps{
 		Config:   cfg,
 		Log:      log,

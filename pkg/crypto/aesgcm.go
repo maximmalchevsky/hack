@@ -1,10 +1,3 @@
-// Package crypto — AES-256-GCM шифрование строк для хранения OAuth-токенов в БД.
-//
-// Использование:
-//
-//	c, err := crypto.NewFromBase64(os.Getenv("APP_ENCRYPTION_KEY"))
-//	enc := c.Encrypt("super-secret-refresh-token")     // -> base64
-//	dec, _ := c.Decrypt(enc)
 package crypto
 
 import (
@@ -16,14 +9,12 @@ import (
 	"fmt"
 )
 
-const keySize = 32 // AES-256
+const keySize = 32
 
-// Cipher — обёртка над AES-GCM с фиксированным ключом.
 type Cipher struct {
 	aead cipher.AEAD
 }
 
-// NewFromBase64 — создаёт Cipher из base64-ключа (32 байта после декодирования).
 func NewFromBase64(keyB64 string) (*Cipher, error) {
 	if keyB64 == "" {
 		return nil, errors.New("crypto: empty key")
@@ -47,7 +38,6 @@ func NewFromBase64(keyB64 string) (*Cipher, error) {
 	return &Cipher{aead: aead}, nil
 }
 
-// Encrypt — возвращает base64(nonce || ciphertext || tag).
 func (c *Cipher) Encrypt(plaintext string) (string, error) {
 	nonce := make([]byte, c.aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
@@ -60,7 +50,6 @@ func (c *Cipher) Encrypt(plaintext string) (string, error) {
 	return base64.StdEncoding.EncodeToString(out), nil
 }
 
-// Decrypt — расшифровывает строку, ранее полученную из Encrypt.
 func (c *Cipher) Decrypt(encB64 string) (string, error) {
 	raw, err := base64.StdEncoding.DecodeString(encB64)
 	if err != nil {

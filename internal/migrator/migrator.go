@@ -1,6 +1,3 @@
-// Package migrator — встраивает SQL-миграции в бинарник через embed.FS
-// и накатывает их при старте процесса (cmd/api). На сервер не нужно тащить
-// папку migrations/ — она уже внутри образа.
 package migrator
 
 import (
@@ -14,14 +11,13 @@ import (
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/jackc/pgx/v5/pgxpool"
-	_ "github.com/lib/pq" // драйвер для database/sql
+	_ "github.com/lib/pq"
 	"github.com/rs/zerolog"
 )
 
 //go:embed migrations/*.sql
 var embeddedFS embed.FS
 
-// Up — накатывает все непримененные миграции. Идемпотентна.
 func Up(pool *pgxpool.Pool, log zerolog.Logger) error {
 	sub, err := fs.Sub(embeddedFS, "migrations")
 	if err != nil {
@@ -32,8 +28,6 @@ func Up(pool *pgxpool.Pool, log zerolog.Logger) error {
 		return fmt.Errorf("migrator: iofs.New: %w", err)
 	}
 
-	// pgx-pool не отдаёт *sql.DB, поэтому открываем отдельное короткоживущее
-	// соединение по DSN (pgxpool сам параметры запомнил). Закроем после Up.
 	cfg := pool.Config().ConnConfig
 	sslmode := "disable"
 	if v, ok := cfg.RuntimeParams["sslmode"]; ok && v != "" {

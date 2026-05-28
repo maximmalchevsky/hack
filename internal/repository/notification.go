@@ -45,7 +45,6 @@ func (r *NotificationRepo) Create(ctx context.Context, in CreateNotificationInpu
 	return scanNotification(row)
 }
 
-// ListByUser — список с возможным фильтром по непрочитанным.
 func (r *NotificationRepo) ListByUser(ctx context.Context, userID uuid.UUID, onlyUnread bool, limit int) ([]domain.Notification, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -78,7 +77,6 @@ func (r *NotificationRepo) ListByUser(ctx context.Context, userID uuid.UUID, onl
 	return out, rows.Err()
 }
 
-// CountUnread — счётчик для бейджа.
 func (r *NotificationRepo) CountUnread(ctx context.Context, userID uuid.UUID) (int, error) {
 	var n int
 	err := r.pool.QueryRow(ctx, `
@@ -114,8 +112,6 @@ func (r *NotificationRepo) MarkAllRead(ctx context.Context, userID uuid.UUID) er
 	`, userID)
 	return err
 }
-
-// --- helpers ---
 
 func scanNotification(s rowScanner) (*domain.Notification, error) {
 	var (

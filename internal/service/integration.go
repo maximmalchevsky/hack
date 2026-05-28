@@ -19,7 +19,6 @@ import (
 	"worktimesync/pkg/crypto"
 )
 
-// Доменные ошибки.
 var (
 	ErrIntegrationBadInput = errors.New("integration: bad input")
 	ErrIntegrationNotFound = errors.New("integration: not found")
@@ -41,10 +40,9 @@ func NewIntegrationService(pool *pgxpool.Pool, cipher *crypto.Cipher, registry *
 	}
 }
 
-// ConnectICalInput — параметры подключения iCal feed (или manual upload).
 type ConnectICalInput struct {
 	EmployeeID uuid.UUID
-	FeedURL    string // если пусто — режим "manual"
+	FeedURL    string
 	Label      string
 }
 
@@ -59,7 +57,6 @@ func (s *IntegrationService) ConnectICal(ctx context.Context, in ConnectICalInpu
 		return nil, fmt.Errorf("ical authenticate: %w", err)
 	}
 
-	// access_token = feed URL; для manual — пустой.
 	enc, err := s.cipher.Encrypt(tok.AccessToken)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt: %w", err)
@@ -78,13 +75,12 @@ func (s *IntegrationService) ConnectICal(ctx context.Context, in ConnectICalInpu
 	})
 }
 
-// ConnectCalDAVInput — параметры CalDAV.
 type ConnectCalDAVInput struct {
 	EmployeeID uuid.UUID
 	Endpoint   string
 	Username   string
 	Password   string
-	CalPath    string // optional
+	CalPath    string
 	Label      string
 }
 
@@ -106,7 +102,6 @@ func (s *IntegrationService) ConnectCalDAV(ctx context.Context, in ConnectCalDAV
 		return nil, fmt.Errorf("caldav authenticate: %w", err)
 	}
 
-	// Храним полный payload (с паролем) зашифрованным в access_token_enc.
 	rawPayload, _ := tok.Raw["payload"].(string)
 	if rawPayload == "" {
 		rawPayload = string(payload)
@@ -132,7 +127,6 @@ func (s *IntegrationService) ConnectCalDAV(ctx context.Context, in ConnectCalDAV
 	})
 }
 
-// ConnectYandexInput — параметры сохранения Yandex Calendar после OAuth-callback.
 type ConnectYandexInput struct {
 	EmployeeID   uuid.UUID
 	AccessToken  string
@@ -147,7 +141,6 @@ func (s *IntegrationService) ConnectYandexCalendar(ctx context.Context, in Conne
 		return nil, ErrIntegrationBadInput
 	}
 
-	// Шифруем access и refresh токены отдельно — refresh может быть пустым.
 	accEnc, err := s.cipher.Encrypt(in.AccessToken)
 	if err != nil {
 		return nil, fmt.Errorf("encrypt access: %w", err)
@@ -183,13 +176,9 @@ func (s *IntegrationService) ConnectYandexCalendar(ctx context.Context, in Conne
 	})
 }
 
-// ConnectJiraInput — параметры подключения Jira Cloud по API token.
-//
-// Проверяем креды через GET /myself перед сохранением — иначе пользователь
-// получит ошибку только при первом sync, что неудобно.
 type ConnectJiraInput struct {
 	EmployeeID uuid.UUID
-	BaseURL    string // https://yourorg.atlassian.net
+	BaseURL    string
 	Email      string
 	APIToken   string
 	Label      string

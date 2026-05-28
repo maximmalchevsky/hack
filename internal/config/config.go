@@ -11,37 +11,30 @@ import (
 )
 
 type Config struct {
-	App       App
-	HTTP      HTTP
-	Postgres  Postgres
-	Redis     Redis
-	JWT       JWT
-	GigaChat  GigaChat
-	OAuth     OAuth
-	Risk      Risk
-	Asynq     Asynq
-	CORS      CORS
-	SMTP      SMTP
-	Telegram  Telegram
-	IMIP      IMIP
+	App      App
+	HTTP     HTTP
+	Postgres Postgres
+	Redis    Redis
+	JWT      JWT
+	GigaChat GigaChat
+	OAuth    OAuth
+	Risk     Risk
+	Asynq    Asynq
+	CORS     CORS
+	SMTP     SMTP
+	Telegram Telegram
+	IMIP     IMIP
 }
 
-// IMIP — рассылка календарных инвайтов (.ics, RFC 6047) при создании встречи
-// и IMAP-приём ответов (Accept/Decline из Gmail/Apple) для автоматического
-// проставления meeting_responses.status.
-//
-// Если Enabled=false или ReplyTo пустой — iMIP не отправляем, IMAP-poller
-// не стартует. Существующие notifications.Push (email/Telegram) продолжают
-// работать независимо.
 type IMIP struct {
-	Enabled          bool          `env:"IMIP_ENABLED" envDefault:"false"`
-	ReplyTo          string        `env:"IMIP_REPLY_TO"`                    // invites@my-domain.ru — ставится в ORGANIZER и Reply-To
-	IMAPHost         string        `env:"IMAP_HOST"`
-	IMAPPort         int           `env:"IMAP_PORT" envDefault:"993"`
-	IMAPUser         string        `env:"IMAP_USER"`
-	IMAPPass         string        `env:"IMAP_PASS"`
-	IMAPMailbox      string        `env:"IMAP_MAILBOX" envDefault:"INBOX"`
-	PollInterval     time.Duration `env:"IMAP_POLL_INTERVAL" envDefault:"60s"`
+	Enabled      bool          `env:"IMIP_ENABLED" envDefault:"false"`
+	ReplyTo      string        `env:"IMIP_REPLY_TO"`
+	IMAPHost     string        `env:"IMAP_HOST"`
+	IMAPPort     int           `env:"IMAP_PORT" envDefault:"993"`
+	IMAPUser     string        `env:"IMAP_USER"`
+	IMAPPass     string        `env:"IMAP_PASS"`
+	IMAPMailbox  string        `env:"IMAP_MAILBOX" envDefault:"INBOX"`
+	PollInterval time.Duration `env:"IMAP_POLL_INTERVAL" envDefault:"60s"`
 }
 
 type SMTP struct {
@@ -49,23 +42,22 @@ type SMTP struct {
 	Port     int    `env:"SMTP_PORT" envDefault:"587"`
 	User     string `env:"SMTP_USER"`
 	Pass     string `env:"SMTP_PASS"`
-	From     string `env:"SMTP_FROM"`           // e.g. Workie <no-reply@worktime.local>
+	From     string `env:"SMTP_FROM"`
 	StartTLS bool   `env:"SMTP_STARTTLS" envDefault:"true"`
 }
 
 type Telegram struct {
 	BotToken    string `env:"TELEGRAM_BOT_TOKEN"`
-	BotUsername string `env:"TELEGRAM_BOT_USERNAME"` // без @, для deeplink t.me/<username>
+	BotUsername string `env:"TELEGRAM_BOT_USERNAME"`
 }
 
 type App struct {
-	Env             string `env:"APP_ENV" envDefault:"development"`
-	PublicURL       string `env:"APP_PUBLIC_URL" envDefault:"http://localhost:8080"`
-	// WebURL — куда редиректим браузер после OAuth-callback'ов (фронт).
-	// В dev обычно http://localhost:5173; в проде совпадает с PublicURL за reverse-proxy.
-	WebURL          string `env:"APP_WEB_URL" envDefault:"http://localhost:5173"`
-	EncryptionKey   string `env:"APP_ENCRYPTION_KEY"`
-	LogLevel        string `env:"LOG_LEVEL" envDefault:"info"`
+	Env       string `env:"APP_ENV" envDefault:"development"`
+	PublicURL string `env:"APP_PUBLIC_URL" envDefault:"http://localhost:8080"`
+
+	WebURL        string `env:"APP_WEB_URL" envDefault:"http://localhost:5173"`
+	EncryptionKey string `env:"APP_ENCRYPTION_KEY"`
+	LogLevel      string `env:"LOG_LEVEL" envDefault:"info"`
 }
 
 type HTTP struct {
@@ -104,16 +96,16 @@ type GigaChat struct {
 }
 
 type OAuth struct {
-	GoogleClientID         string `env:"OAUTH_GOOGLE_CLIENT_ID"`
-	GoogleClientSecret     string `env:"OAUTH_GOOGLE_CLIENT_SECRET"`
-	GoogleRedirectURL      string `env:"OAUTH_GOOGLE_REDIRECT_URL"`
-	MicrosoftClientID      string `env:"OAUTH_MICROSOFT_CLIENT_ID"`
-	MicrosoftClientSecret  string `env:"OAUTH_MICROSOFT_CLIENT_SECRET"`
-	MicrosoftTenant        string `env:"OAUTH_MICROSOFT_TENANT" envDefault:"common"`
-	MicrosoftRedirectURL   string `env:"OAUTH_MICROSOFT_REDIRECT_URL"`
-	YandexClientID         string `env:"OAUTH_YANDEX_CLIENT_ID"`
-	YandexClientSecret     string `env:"OAUTH_YANDEX_CLIENT_SECRET"`
-	YandexRedirectURL      string `env:"OAUTH_YANDEX_REDIRECT_URL"`
+	GoogleClientID        string `env:"OAUTH_GOOGLE_CLIENT_ID"`
+	GoogleClientSecret    string `env:"OAUTH_GOOGLE_CLIENT_SECRET"`
+	GoogleRedirectURL     string `env:"OAUTH_GOOGLE_REDIRECT_URL"`
+	MicrosoftClientID     string `env:"OAUTH_MICROSOFT_CLIENT_ID"`
+	MicrosoftClientSecret string `env:"OAUTH_MICROSOFT_CLIENT_SECRET"`
+	MicrosoftTenant       string `env:"OAUTH_MICROSOFT_TENANT" envDefault:"common"`
+	MicrosoftRedirectURL  string `env:"OAUTH_MICROSOFT_REDIRECT_URL"`
+	YandexClientID        string `env:"OAUTH_YANDEX_CLIENT_ID"`
+	YandexClientSecret    string `env:"OAUTH_YANDEX_CLIENT_SECRET"`
+	YandexRedirectURL     string `env:"OAUTH_YANDEX_REDIRECT_URL"`
 }
 
 type Risk struct {
@@ -126,10 +118,10 @@ type Risk struct {
 }
 
 type Asynq struct {
-	Concurrency      int `env:"ASYNQ_CONCURRENCY" envDefault:"10"`
-	QueuesDefault    int `env:"ASYNQ_QUEUES_DEFAULT" envDefault:"6"`
-	QueuesCritical   int `env:"ASYNQ_QUEUES_CRITICAL" envDefault:"3"`
-	QueuesLow        int `env:"ASYNQ_QUEUES_LOW" envDefault:"1"`
+	Concurrency    int `env:"ASYNQ_CONCURRENCY" envDefault:"10"`
+	QueuesDefault  int `env:"ASYNQ_QUEUES_DEFAULT" envDefault:"6"`
+	QueuesCritical int `env:"ASYNQ_QUEUES_CRITICAL" envDefault:"3"`
+	QueuesLow      int `env:"ASYNQ_QUEUES_LOW" envDefault:"1"`
 }
 
 type CORS struct {
@@ -137,8 +129,6 @@ type CORS struct {
 }
 
 func Load() (*Config, error) {
-	// Подгружаем .env из корня проекта, если файл существует.
-	// В Docker'е переменные уже выставлены, .env-файла внутри нет — Load пройдёт молча.
 	loadDotEnv()
 
 	cfg := &Config{}
@@ -151,8 +141,6 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// loadDotEnv ищет .env вверх по дереву от CWD (макс 5 уровней) и подгружает первый найденный.
-// Не падает, если файла нет.
 func loadDotEnv() {
 	cwd, err := os.Getwd()
 	if err != nil {

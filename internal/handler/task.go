@@ -13,11 +13,6 @@ import (
 	"worktimesync/internal/service"
 )
 
-// TaskHandler — endpoint'ы /api/v1/me/tasks/*.
-//
-// GET    /me/tasks                — список задач + слоты + AI-оценки
-// POST   /me/tasks/replan         — пересчитать план + (опционально) AI-fill estimate
-// PATCH  /me/tasks/:id/estimate   — ручная оценка часов (заменяет AI)
 type TaskHandler struct {
 	pool    *pgxpool.Pool
 	planner *service.TaskPlannerService
@@ -39,8 +34,6 @@ func (h *TaskHandler) Mount(r fiber.Router) {
 	g.Patch("/:id/estimate", h.setEstimate)
 }
 
-// list — отдаём задачи + текущие слоты. Сами слоты НЕ пересчитываем — UI просит
-// replan отдельной кнопкой, чтобы не запускать GigaChat на каждое открытие.
 func (h *TaskHandler) list(c fiber.Ctx) error {
 	empID := middleware.EmployeeID(c)
 	if empID == uuid.Nil {
@@ -53,7 +46,6 @@ func (h *TaskHandler) list(c fiber.Ctx) error {
 		return err
 	}
 
-	// Если у нас есть слоты — отдаём вместе с задачами для рендера Gantt'а.
 	now := time.Now().UTC()
 	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	to := from.AddDate(0, 0, service.PlanHorizonDays)
@@ -79,8 +71,6 @@ func (h *TaskHandler) list(c fiber.Ctx) error {
 	})
 }
 
-// replan — POST /me/tasks/replan. Сначала EnsureEstimates для задач без оценки,
-// потом полный пересчёт слотов.
 func (h *TaskHandler) replan(c fiber.Ctx) error {
 	empID := middleware.EmployeeID(c)
 	if empID == uuid.Nil {
@@ -91,7 +81,6 @@ func (h *TaskHandler) replan(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	// После replan'а — сразу проверяем перегруз и пишем рекомендацию.
 	h.planner.CheckOverload(c.Context(), empID, res)
 	return c.JSON(fiber.Map{
 		"ai_calls":      aiCalls,
@@ -101,8 +90,6 @@ func (h *TaskHandler) replan(c fiber.Ctx) error {
 	})
 }
 
-// setEstimate — пользователь принял оценку AI или вписал свою. Пишем в
-// estimated_hours (planner потом возьмёт это как manual).
 type setEstimateRequest struct {
 	Hours float64 `json:"hours"`
 }

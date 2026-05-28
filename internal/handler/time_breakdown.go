@@ -35,7 +35,6 @@ func (h *TimeBreakdownHandler) team(c fiber.Ctx) error {
 	role := middleware.CurrentRole(c)
 	empID := middleware.EmployeeID(c)
 
-	// RBAC: admin/HR/analyst — везде, остальные — только если они owner ИЛИ участник команды.
 	if role != domain.RoleAdmin && role != domain.RoleHR && role != domain.RoleAnalyst {
 		var ownerID uuid.UUID
 		var isMember bool

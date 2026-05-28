@@ -1,7 +1,5 @@
 package workers
 
-// Типы Asynq-задач — единые константы для enqueuer'а и обработчика.
-// Префикс домена : действие : сущность.
 const (
 	TaskSyncIncremental         = "sync:incremental"
 	TaskSyncBackfill            = "sync:backfill"
@@ -12,29 +10,17 @@ const (
 	TaskAIRecommend             = "ai:recommend"
 	TaskNotificationSend        = "notifications:send"
 	TaskDigestDaily             = "digest:daily"
-	TaskReminderScan            = "reminders:scan" // каждую минуту — событие через 15 мин
+	TaskReminderScan            = "reminders:scan"
 	TaskTeamDigestWeekly        = "digest:team-weekly"
 
-	// TaskSyncTickAll — каждые 5 минут scheduler шлёт эту задачу, worker
-	// внутри её обработчика разворачивает её в N задач sync:incremental
-	// для всех активных интеграций. Нужен fan-out на уровне worker'а,
-	// потому что scheduler не знает список интеграций — он только пинает.
 	TaskSyncTickAll = "scheduler:tick:sync-incremental"
 
-	// TaskTasksReplanAll — раз в час; worker дёргает TaskPlannerService.Plan
-	// для всех сотрудников с активными Jira/Tracker-интеграциями.
-	TaskTasksReplanAll = "scheduler:tick:tasks-replan"
-	// TaskTasksAIEstimate — раз в 30 минут; для задач без estimated_hours
-	// и ai_estimated_hours дёргает GigaChat.
+	TaskTasksReplanAll  = "scheduler:tick:tasks-replan"
 	TaskTasksAIEstimate = "scheduler:tick:tasks-ai-estimate"
 
-	// TaskTasksReplanOne — пересчитать план одного сотрудника. Триггерится
-	// когда меняется его профиль / появилось/удалилось исключение.
-	// Без этого старый план остаётся на нерабочих днях и виден как конфликт.
 	TaskTasksReplanOne = "tasks:replan:one"
 )
 
-// Очереди по приоритетам.
 const (
 	QueueCritical = "critical"
 	QueueDefault  = "default"

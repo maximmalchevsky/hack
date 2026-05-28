@@ -17,53 +17,28 @@ import (
 	"worktimesync/internal/ai/prompts"
 )
 
-// --- Постпроцессинг: вырезаем «нейрослоп» с метриками ---
-//
-// Промпт явно запрещает выдавать «A=0.20», «L=0.87», «z-score = 2.1», но
-// GigaChat периодически их всё равно протаскивает. Чтобы пользователь не видел
-// сырые метрики, фильтруем ответ регулярками.
-//
-// Что вырезаем:
-//   - «A=0.20», «C = 0.34», «L= 0.87», «R=0.5», «Z=0.30», «H=0.1»
-//     (одинарная заглавная буква-метрика + знак = + число).
-//   - «z-score = 2.1», «z score=3», «zscore=1.5».
-//   - «score = 0.42» (общий).
-//   - Парные скобки вокруг них: «(A=0.20)», «(L=0.87, C=0.34)» — целиком убираем.
-//   - Хвостовые запятые/двоеточия/тире, оставшиеся от вырезания: «Иван — , » → «Иван».
-
 var (
-	// «(A=0.20)», «(L=0.87, C=0.34)», «(z-score=2)»
 	rxMetricParens = regexp.MustCompile(`(?i)\s*\(\s*(?:[A-Z]\s*=\s*\d+(?:[.,]\d+)?|z[\s-]*score\s*=?\s*\d+(?:[.,]\d+)?|score\s*=\s*\d+(?:[.,]\d+)?)(?:\s*[,;]\s*(?:[A-Z]\s*=\s*\d+(?:[.,]\d+)?|z[\s-]*score\s*=?\s*\d+(?:[.,]\d+)?|score\s*=\s*\d+(?:[.,]\d+)?))*\s*\)`)
-	// Голая метрика, отделённая запятой/двоеточием/тире/пробелом.
-	rxMetric = regexp.MustCompile(`(?i)(?:[,;:]\s*|\s+—\s+|\s+-\s+|\s+)([A-Z]\s*=\s*\d+(?:[.,]\d+)?|z[\s-]*score\s*=?\s*\d+(?:[.,]\d+)?|score\s*=\s*\d+(?:[.,]\d+)?)`)
-	// Хвостовые артефакты после вырезания: «текст — .», «текст, ,», «текст :  ».
-	rxTrailDangle = regexp.MustCompile(`[\s—\-,:;]+([.\n]|$)`)
+	rxMetric       = regexp.MustCompile(`(?i)(?:[,;:]\s*|\s+—\s+|\s+-\s+|\s+)([A-Z]\s*=\s*\d+(?:[.,]\d+)?|z[\s-]*score\s*=?\s*\d+(?:[.,]\d+)?|score\s*=\s*\d+(?:[.,]\d+)?)`)
+	rxTrailDangle  = regexp.MustCompile(`[\s—\-,:;]+([.\n]|$)`)
 )
 
-// stripMetricValues — убирает из текста значения метрик A/C/L/R/Z/H/z-score.
-// Применяется и к финальному answer, и к каждому стрим-chunk'у. Делает это
-// аккуратно: сохраняет имена и бизнес-цифры (вроде «142 дня»).
 func stripMetricValues(s string) string {
 	if s == "" {
 		return s
 	}
-	// Сначала скобочные группы (там может быть несколько метрик через запятую).
 	s = rxMetricParens.ReplaceAllString(s, "")
-	// Затем одиночные метрики с предшествующим разделителем.
 	s = rxMetric.ReplaceAllString(s, "")
-	// Чистка артефактов перед точкой/переносом.
 	s = rxTrailDangle.ReplaceAllString(s, "$1")
 	return s
 }
 
-// AIChatService — чат-ассистент. Блокирующий Ask + стримящий AskStream.
 type AIChatService struct {
 	pool    *pgxpool.Pool
 	llm     ai.Client
 	context *ChatContextBuilder
 }
 
-// AskStreamEvent — событие, идущее во внешний канал клиенту (SSE).
 type AskStreamEvent struct {
 	ConversationID uuid.UUID
 	Delta          string
@@ -75,9 +50,6 @@ func NewAIChatService(pool *pgxpool.Pool, llm ai.Client, ctxBuilder *ChatContext
 	return &AIChatService{pool: pool, llm: llm, context: ctxBuilder}
 }
 
-// buildSystemMessages — общий промпт + динамический snapshot системы.
-// GigaChat не принимает несколько подряд system messages (отдаёт 422),
-// поэтому склеиваем в одно сообщение через разделитель.
 func (s *AIChatService) buildSystemMessages(ctx context.Context, userID uuid.UUID) []ai.Message {
 	content := prompts.ChatAssistant
 	if s.context != nil {
@@ -88,12 +60,10 @@ func (s *AIChatService) buildSystemMessages(ctx context.Context, userID uuid.UUI
 	return []ai.Message{{Role: ai.RoleSystem, Content: content}}
 }
 
-// ChatAvailable — true если LLM-провайдер настроен.
 func (s *AIChatService) ChatAvailable() bool {
 	return s.llm != nil
 }
 
-// HealthPing — короткий запрос-проба к LLM. Возвращает имя модели.
 func (s *AIChatService) HealthPing(ctx context.Context) (string, error) {
 	if s.llm == nil {
 		return "", errors.New("llm not configured")
@@ -118,8 +88,6 @@ func (s *AIChatService) HealthPing(ctx context.Context) (string, error) {
 	return s.llm.Name(), nil
 }
 
-// Ask — однократный запрос-ответ с историей в БД.
-// Если LLM не настроен, возвращает мягкий ответ-заглушку.
 func (s *AIChatService) Ask(ctx context.Context, userID uuid.UUID, conversationID *uuid.UUID, userMessage string) (string, uuid.UUID, error) {
 	if userMessage == "" {
 		return "", uuid.Nil, errors.New("ai: empty message")
@@ -164,10 +132,6 @@ func (s *AIChatService) Ask(ctx context.Context, userID uuid.UUID, conversationI
 	return answer, convID, nil
 }
 
-// AskStream — стримящий вариант Ask. Возвращает канал событий.
-// Канал закрывается после Done или Err.
-//
-// Поведение при отсутствии LLM: одно событие с заглушкой + Done.
 func (s *AIChatService) AskStream(ctx context.Context, userID uuid.UUID, conversationID *uuid.UUID, userMessage string) (<-chan AskStreamEvent, error) {
 	if userMessage == "" {
 		return nil, errors.New("ai: empty message")
@@ -209,10 +173,7 @@ func (s *AIChatService) AskStream(ctx context.Context, userID uuid.UUID, convers
 		MaxTokens:   800,
 	})
 	if err != nil {
-		// Логируем причину отказа от streaming-вызова. До этого молча падали
-		// в Complete-fallback и пользователь видел только «…» в UI.
 		log.Warn().Err(err).Str("user_id", userID.String()).Msg("ai_chat: stream failed, falling back to complete")
-		// Fallback: пробуем Complete синхронно, чтобы юзер не остался ни с чем.
 		go func() {
 			defer close(out)
 			resp, cerr := s.llm.Complete(ctx, ai.CompletionRequest{
@@ -243,10 +204,6 @@ func (s *AIChatService) AskStream(ctx context.Context, userID uuid.UUID, convers
 				out <- AskStreamEvent{ConversationID: convID, Err: chunk.Err}
 			}
 			if chunk.Delta != "" {
-				// Чистим прямо в чанке — успеваем убрать метрики на лету.
-				// Граница между чанками может разорвать паттерн (приходит
-				// «A=» в одном, «0.20» в другом) — для такого случая в Done
-				// делаем финальный «replace» с очищенным полным ответом.
 				cleaned := stripMetricValues(chunk.Delta)
 				buf.WriteString(chunk.Delta)
 				if cleaned != "" {
@@ -298,17 +255,12 @@ func (s *AIChatService) appendMessage(ctx context.Context, convID uuid.UUID, rol
 	return nil
 }
 
-// --- Восстановление чата + очистка ---
-
-// StoredMessage — сообщение для UI (с датой).
 type StoredMessage struct {
 	Role      string    `json:"role"`
 	Content   string    `json:"content"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// LatestConversation — id последней беседы пользователя (нужен для авто-восстановления
-// при заходе на /ai-chat). Возвращает uuid.Nil если бесед нет.
 func (s *AIChatService) LatestConversation(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := s.pool.QueryRow(ctx, `
@@ -326,8 +278,6 @@ func (s *AIChatService) LatestConversation(ctx context.Context, userID uuid.UUID
 	return id, nil
 }
 
-// ListMessages — сообщения конкретной беседы с проверкой owner.
-// Возвращает ErrChatForbidden если беседа не принадлежит этому user.
 func (s *AIChatService) ListMessages(ctx context.Context, convID, userID uuid.UUID) ([]StoredMessage, error) {
 	if err := s.assertOwner(ctx, convID, userID); err != nil {
 		return nil, err
@@ -353,7 +303,6 @@ func (s *AIChatService) ListMessages(ctx context.Context, convID, userID uuid.UU
 	return out, rows.Err()
 }
 
-// DeleteConversation — удаляет беседу пользователя со всеми сообщениями.
 func (s *AIChatService) DeleteConversation(ctx context.Context, convID, userID uuid.UUID) error {
 	if err := s.assertOwner(ctx, convID, userID); err != nil {
 		return err
@@ -367,13 +316,10 @@ func (s *AIChatService) DeleteConversation(ctx context.Context, convID, userID u
 	return nil
 }
 
-// ErrChatForbidden — попытка доступа к чужой беседе.
 var ErrChatForbidden = errors.New("ai chat: forbidden")
 
-// pgxErrNoRows — обёртка чтобы не тащить pgx-импорт сюда.
 var pgxErrNoRows = pgx.ErrNoRows
 
-// assertOwner — проверяет, что conversation принадлежит userID.
 func (s *AIChatService) assertOwner(ctx context.Context, convID, userID uuid.UUID) error {
 	var owner uuid.UUID
 	err := s.pool.QueryRow(ctx, `SELECT user_id FROM ai_conversations WHERE id = $1`, convID).Scan(&owner)

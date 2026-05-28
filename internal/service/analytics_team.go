@@ -1,6 +1,3 @@
-// Package service — AnalyticsTeamService отдаёт командную аналитику для таба
-// «Команды» на /analytics. Скоуп — команды, у которых owner_id равен переданному
-// employee_id, либо одна конкретная команда (с проверкой владения).
 package service
 
 import (
@@ -31,17 +28,14 @@ func NewAnalyticsTeamService(
 	return &AnalyticsTeamService{pool: pool, weights: weights, diagnostics: diag, conflicts: conf}
 }
 
-// TeamRef — лёгкая ссылка на команду для селектора.
 type TeamRef struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Members int    `json:"members"`
 }
 
-// ErrTeamNotOwned — попытка работать с чужой командой.
 var ErrTeamNotOwned = errors.New("team is not owned by this employee")
 
-// TeamsForOwner — список команд, где owner_id = ownerEmpID.
 func (s *AnalyticsTeamService) TeamsForOwner(ctx context.Context, ownerEmpID uuid.UUID) ([]TeamRef, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT t.id, t.name, count(tm.employee_id)
@@ -66,9 +60,6 @@ func (s *AnalyticsTeamService) TeamsForOwner(ctx context.Context, ownerEmpID uui
 	return out, rows.Err()
 }
 
-// scope — массив employee_id, попавших в скоуп.
-// Если teamID == nil — все участники всех команд этого менеджера (уникальные).
-// Если teamID != nil — участники этой команды (с проверкой владения).
 func (s *AnalyticsTeamService) scope(ctx context.Context, ownerEmpID uuid.UUID, teamID *uuid.UUID) ([]uuid.UUID, error) {
 	var rows interface {
 		Next() bool
@@ -89,7 +80,6 @@ func (s *AnalyticsTeamService) scope(ctx context.Context, ownerEmpID uuid.UUID, 
 		}
 		rows = r
 	} else {
-		// Проверка владения.
 		var ownerID *uuid.UUID
 		if err := s.pool.QueryRow(ctx, `SELECT owner_id FROM teams WHERE id = $1`, *teamID).Scan(&ownerID); err != nil {
 			return nil, err
@@ -116,12 +106,10 @@ func (s *AnalyticsTeamService) scope(ctx context.Context, ownerEmpID uuid.UUID, 
 	return out, rows.Err()
 }
 
-// inSet — мини-помощник для фильтрации по списку UUID.
 func inSet(ids []uuid.UUID, id uuid.UUID) bool {
 	return slices.Contains(ids, id)
 }
 
-// TeamScopeOverview — KPI в скоупе команд(ы).
 type TeamScopeOverview struct {
 	Employees     int     `json:"employees"`
 	AvgA          float64 `json:"avg_a"`
@@ -133,7 +121,6 @@ type TeamScopeOverview struct {
 	OnVacation    int     `json:"on_vacation_now"`
 }
 
-// Overview — те же 8 KPI что у компании, но в скоупе.
 func (s *AnalyticsTeamService) Overview(ctx context.Context, ownerEmpID uuid.UUID, teamID *uuid.UUID) (*TeamScopeOverview, error) {
 	empIDs, err := s.scope(ctx, ownerEmpID, teamID)
 	if err != nil {
@@ -144,7 +131,6 @@ func (s *AnalyticsTeamService) Overview(ctx context.Context, ownerEmpID uuid.UUI
 		return out, nil
 	}
 
-	// AvgR / AvgL — из последних metrics_snapshots для empIDs.
 	_ = s.pool.QueryRow(ctx, `
 		SELECT COALESCE(AVG(risk_r), 0), COALESCE(AVG(load_l), 0)
 		FROM (
@@ -155,7 +141,6 @@ func (s *AnalyticsTeamService) Overview(ctx context.Context, ownerEmpID uuid.UUI
 		) latest
 	`, empIDs).Scan(&out.AvgR, &out.AvgL)
 
-	// AvgA через diagnostics (по last_profile_update_at).
 	groups, err := s.diagnostics.Build(ctx)
 	if err == nil {
 		var sumA float64
@@ -184,7 +169,6 @@ func (s *AnalyticsTeamService) Overview(ctx context.Context, ownerEmpID uuid.UUI
 		out.NeedsConfirm = needsConfirm
 	}
 
-	// Конфликты за 7 дней в скоупе.
 	from := time.Now().UTC().AddDate(0, 0, -7)
 	to := time.Now().UTC().AddDate(0, 0, 1)
 	if cs, err := s.conflicts.ListAll(ctx, from, to, 5000); err == nil {
@@ -195,7 +179,6 @@ func (s *AnalyticsTeamService) Overview(ctx context.Context, ownerEmpID uuid.UUI
 		}
 	}
 
-	// На отпуске / командировке в скоупе сейчас.
 	_ = s.pool.QueryRow(ctx, `
 		SELECT count(DISTINCT employee_id) FROM time_exceptions
 		WHERE employee_id = ANY($1::uuid[])
@@ -205,7 +188,6 @@ func (s *AnalyticsTeamService) Overview(ctx context.Context, ownerEmpID uuid.UUI
 	return out, nil
 }
 
-// RiskByTeam — список команд этого менеджера со средним R/A.
 func (s *AnalyticsTeamService) RiskByTeam(ctx context.Context, ownerEmpID uuid.UUID) ([]TeamRisk, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT t.id, t.name,
@@ -240,7 +222,6 @@ func (s *AnalyticsTeamService) RiskByTeam(ctx context.Context, ownerEmpID uuid.U
 	return out, rows.Err()
 }
 
-// ConflictsByWeekday — конфликты в скоупе за 30 дней, сгруппированные по weekday.
 func (s *AnalyticsTeamService) ConflictsByWeekday(ctx context.Context, ownerEmpID uuid.UUID, teamID *uuid.UUID) ([]WeekdayConflicts, error) {
 	empIDs, err := s.scope(ctx, ownerEmpID, teamID)
 	if err != nil {
@@ -273,9 +254,6 @@ func (s *AnalyticsTeamService) ConflictsByWeekday(ctx context.Context, ownerEmpI
 	return out, nil
 }
 
-// FreshnessTrend — динамика средней A в скоупе за 8 недель.
-// Принцип тот же, что и в AnalyticsDashService.FreshnessTrend, только
-// фильтруем сотрудников по empIDs.
 func (s *AnalyticsTeamService) FreshnessTrend(ctx context.Context, ownerEmpID uuid.UUID, teamID *uuid.UUID) ([]WeekFreshness, error) {
 	empIDs, err := s.scope(ctx, ownerEmpID, teamID)
 	if err != nil {
@@ -343,7 +321,6 @@ func (s *AnalyticsTeamService) FreshnessTrend(ctx context.Context, ownerEmpID uu
 	return out, nil
 }
 
-// GroupsDistribution — распределение по группам диагностики в скоупе.
 func (s *AnalyticsTeamService) GroupsDistribution(ctx context.Context, ownerEmpID uuid.UUID, teamID *uuid.UUID) ([]GroupSlice, error) {
 	empIDs, err := s.scope(ctx, ownerEmpID, teamID)
 	if err != nil {

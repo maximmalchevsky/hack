@@ -1,6 +1,3 @@
-// TeamWeeklyDigestService — собирает понедельный дайджест для менеджера
-// (для каждой команды, где он owner) и пропускает его через GigaChat,
-// чтобы получить человеческий короткий текст. Кладём в notifications с kind='team_digest'.
 package service
 
 import (
@@ -25,36 +22,32 @@ func NewTeamWeeklyDigestService(pool *pgxpool.Pool, llm ai.Client) *TeamWeeklyDi
 	return &TeamWeeklyDigestService{pool: pool, llm: llm}
 }
 
-// DigestPayload — сводка за прошлые 7 дней по командам менеджера.
 type DigestPayload struct {
-	WeekStart       time.Time      `json:"week_start"`
-	WeekEnd         time.Time      `json:"week_end"`
-	TotalEmployees  int            `json:"total_employees"`
-	AvgFreshnessA   float64        `json:"avg_freshness_a"`
-	AvgRiskR        float64        `json:"avg_risk_r"`
-	AvgLoadL        float64        `json:"avg_load_l"`
-	StaleCount      int            `json:"stale_count"`      // A < 0.5
-	NeedsConfirm    int            `json:"needs_confirm"`    // 0.5 ≤ A < 0.8
-	BurnoutCount    int            `json:"burnout_count"`    // L > 0.85 за неделю
-	ActionItems     []ActionItem   `json:"action_items"`     // top-N людей по приоритету
-	Md              string         `json:"md"`               // готовый markdown
-	GeneratedBy     string         `json:"generated_by"`     // ai | rule
+	WeekStart      time.Time    `json:"week_start"`
+	WeekEnd        time.Time    `json:"week_end"`
+	TotalEmployees int          `json:"total_employees"`
+	AvgFreshnessA  float64      `json:"avg_freshness_a"`
+	AvgRiskR       float64      `json:"avg_risk_r"`
+	AvgLoadL       float64      `json:"avg_load_l"`
+	StaleCount     int          `json:"stale_count"`
+	NeedsConfirm   int          `json:"needs_confirm"`
+	BurnoutCount   int          `json:"burnout_count"`
+	ActionItems    []ActionItem `json:"action_items"`
+	Md             string       `json:"md"`
+	GeneratedBy    string       `json:"generated_by"`
 }
 
-// ActionItem — конкретный сотрудник, на которого стоит обратить внимание.
 type ActionItem struct {
 	EmployeeID uuid.UUID `json:"employee_id"`
 	FullName   string    `json:"full_name"`
-	Problem    string    `json:"problem"`      // "устаревший график" | "перегрузка" | "выгорание"
+	Problem    string    `json:"problem"`
 }
 
-// Build — собирает данные. AI-текст генерится отдельно (для нужного fallback).
 func (s *TeamWeeklyDigestService) Build(ctx context.Context, ownerEmpID uuid.UUID) (*DigestPayload, error) {
 	end := time.Now()
 	start := end.AddDate(0, 0, -7)
 	out := &DigestPayload{WeekStart: start, WeekEnd: end, ActionItems: []ActionItem{}}
 
-	// Сводный агрегат по сотрудникам всех команд этого manager.
 	err := s.pool.QueryRow(ctx, `
 		WITH emps AS (
 			SELECT DISTINCT e.id AS emp_id, u.full_name
@@ -86,7 +79,6 @@ func (s *TeamWeeklyDigestService) Build(ctx context.Context, ownerEmpID uuid.UUI
 		return nil, err
 	}
 
-	// Burnout: L > 0.85 за прошлую неделю.
 	err = s.pool.QueryRow(ctx, `
 		WITH emps AS (
 			SELECT DISTINCT e.id AS emp_id
@@ -106,7 +98,6 @@ func (s *TeamWeeklyDigestService) Build(ctx context.Context, ownerEmpID uuid.UUI
 		out.BurnoutCount = 0
 	}
 
-	// Action items — топ-5 по приоритету.
 	rows, err := s.pool.Query(ctx, `
 		WITH emps AS (
 			SELECT DISTINCT e.id AS emp_id, u.full_name
@@ -161,9 +152,7 @@ func (s *TeamWeeklyDigestService) Build(ctx context.Context, ownerEmpID uuid.UUI
 	return out, nil
 }
 
-// GenerateText — текст дайджеста через GigaChat. Если LLM недоступен — fallback на шаблон.
 func (s *TeamWeeklyDigestService) GenerateText(ctx context.Context, p *DigestPayload) string {
-	// Если LLM не настроен или нет данных — отдаём rule-based.
 	if s.llm == nil || p.TotalEmployees == 0 {
 		return s.ruleBased(p)
 	}

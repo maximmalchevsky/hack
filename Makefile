@@ -84,7 +84,7 @@ build-scheduler:
 build-web:
 	docker compose build web
 
-# ===== Dev (без web и caddy) =====
+
 DEV_COMPOSE := docker compose -f docker-compose.dev.yml
 
 dev-up:
@@ -139,7 +139,7 @@ vet:
 lint: vet
 	go build ./...
 
-# ===== Frontend =====
+
 web-install:
 	cd web && pnpm install
 
@@ -149,7 +149,7 @@ web-dev:
 web-build:
 	cd web && pnpm build
 
-# ===== Прочее =====
+
 seed:
 	@echo "seed запускается автоматически при старте api (internal/bootstrap)."
 	@echo "Креды admin'a выводятся в логи api при первом старте — make dev-logs."

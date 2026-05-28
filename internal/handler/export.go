@@ -28,29 +28,17 @@ func (h *ExportHandler) Mount(r fiber.Router) {
 	g.Get("/:kind", h.download)
 }
 
-// download — выгрузка пресета. Query-параметры:
-//
-//	?format=json|xlsx (default xlsx)
-//	?from=YYYY-MM-DD          — нижняя граница периода
-//	?to=YYYY-MM-DD            — верхняя граница (включительно по дню)
-//	?departments=Platform,QA  — фильтр по отделам (CSV)
-//	?columns=Email,Роль       — оставить только эти колонки (CSV, по именам headers)
-//
-// Если задан хотя бы один из from/to/departments/columns — XLSX генерится
-// через BuildDataset+DatasetToXLSX, чтобы фильтры применились единообразно.
-// Иначе — старый быстрый путь Build (без фильтров) для совместимости.
 func (h *ExportHandler) download(c fiber.Ctx) error {
 	kind := service.ExportKind(c.Params("kind"))
 	opts := parseDatasetOptions(c)
 
-	// --- RBAC ---
 	role := middleware.CurrentRole(c)
 	empID := middleware.EmployeeID(c)
 	switch role {
 	case domain.RoleAdmin, domain.RoleHR:
-		// видят всё — без ограничений
+
 	case domain.RoleManager, domain.RolePM:
-		// видят только участников своих команд
+
 		if empID == uuid.Nil {
 			return fiber.NewError(fiber.StatusUnauthorized, "no employee")
 		}
@@ -60,7 +48,7 @@ func (h *ExportHandler) download(c fiber.Ctx) error {
 		}
 		opts.RestrictEmpIDs = ids
 	default:
-		// employee / analyst — выгрузки запрещены
+
 		return fiber.NewError(fiber.StatusForbidden, "выгрузки доступны только руководителям, HR и админам")
 	}
 
@@ -75,7 +63,6 @@ func (h *ExportHandler) download(c fiber.Ctx) error {
 		return c.JSON(ds)
 	}
 
-	// XLSX: если есть фильтры/колонки — через dataset → xlsx, иначе старый путь.
 	if hasFilters(opts) {
 		ds, err := h.svc.BuildDataset(c.Context(), kind, opts)
 		if err != nil {
@@ -114,7 +101,7 @@ func parseDatasetOptions(c fiber.Ctx) service.DatasetOptions {
 	}
 	if v := c.Query("to"); v != "" {
 		if t, err := parseDateQuery(v); err == nil {
-			// "to" интерпретируем как конец дня — включительно.
+
 			eod := t.Add(24*time.Hour - time.Nanosecond)
 			opts.To = &eod
 		}
@@ -131,7 +118,6 @@ func parseDatasetOptions(c fiber.Ctx) service.DatasetOptions {
 	return opts
 }
 
-// parseDateQuery принимает YYYY-MM-DD или RFC3339.
 func parseDateQuery(v string) (time.Time, error) {
 	if len(v) == 10 {
 		return time.ParseInLocation("2006-01-02", v, time.UTC)
@@ -157,8 +143,6 @@ func hasFilters(opts service.DatasetOptions) bool {
 		len(opts.Kinds) > 0 || len(opts.RestrictEmpIDs) > 0
 }
 
-// teamEmpIDs — список employee_id всех участников команд, где ownerEmpID — owner.
-// Используется в RBAC: manager/pm видят выгрузку только по своим командам.
 func (h *ExportHandler) teamEmpIDs(c fiber.Ctx, ownerEmpID uuid.UUID) ([]uuid.UUID, error) {
 	rows, err := h.pool.Query(c.Context(), `
 		SELECT DISTINCT tm.employee_id
@@ -177,7 +161,7 @@ func (h *ExportHandler) teamEmpIDs(c fiber.Ctx, ownerEmpID uuid.UUID) ([]uuid.UU
 			out = append(out, id)
 		}
 	}
-	// Сам менеджер тоже виден.
+
 	out = append(out, ownerEmpID)
 	return out, nil
 }

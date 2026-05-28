@@ -1,7 +1,3 @@
-// Package jira — TrackerProvider для Atlassian Jira.
-//
-// Использует REST API v3 + Basic Auth (email + API token) или Personal Access Token.
-// AuthPayload передаётся в Authenticate как JSON.
 package jira
 
 import (
@@ -30,11 +26,10 @@ func New() *Provider {
 
 func (p *Provider) Name() integrations.Provider { return integrations.ProviderJira }
 
-// AuthPayload — то, что приходит в Authenticate.
 type AuthPayload struct {
-	BaseURL  string `json:"base_url"`  // https://yourorg.atlassian.net
-	Email    string `json:"email"`     // для Cloud
-	APIToken string `json:"api_token"` // создаётся в Atlassian аккаунте
+	BaseURL  string `json:"base_url"`
+	Email    string `json:"email"`
+	APIToken string `json:"api_token"`
 }
 
 func (p *Provider) Authenticate(ctx context.Context, authCode string) (*integrations.Token, error) {
@@ -52,7 +47,6 @@ func (p *Provider) Authenticate(ctx context.Context, authCode string) (*integrat
 		return nil, fmt.Errorf("jira: invalid base_url: %w", err)
 	}
 
-	// Проверим креды через GET /rest/api/3/myself.
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
 		strings.TrimRight(payload.BaseURL, "/")+"/rest/api/3/myself", nil)
 	req.SetBasicAuth(payload.Email, payload.APIToken)
@@ -81,7 +75,6 @@ func (p *Provider) RefreshToken(ctx context.Context, _ *integrations.Token) (*in
 	return nil, nil
 }
 
-// FetchTasks — задачи, назначенные на сотрудника, с дедлайнами в окне [from, to].
 func (p *Provider) FetchTasks(ctx context.Context, token *integrations.Token, assignee string, from, to time.Time) ([]integrations.Task, error) {
 	if token == nil {
 		return nil, errors.New("jira: nil token")
@@ -92,13 +85,6 @@ func (p *Provider) FetchTasks(ctx context.Context, token *integrations.Token, as
 		return nil, err
 	}
 
-	// JQL: либо «мои незакрытые задачи», либо «у меня с дедлайном в окне».
-	// Берём оба варианта объединением: всё что мне назначено и не Done,
-	// плюс задачи с дедлайном в горизонте планирования. Без duedate
-	// в Jira куча задач, и они тоже нужны планировщику.
-	//
-	// Используем POST /rest/api/3/search/jql — старый /search Atlassian
-	// депрекейтнул в 2024, окончательно отключил 1 мая 2025 (HTTP 410 Gone).
 	jql := fmt.Sprintf(
 		`assignee = "%s" AND (statusCategory != Done OR (duedate >= "%s" AND duedate <= "%s")) ORDER BY priority DESC, duedate ASC`,
 		assignee,
@@ -135,14 +121,14 @@ func (p *Provider) FetchTasks(ctx context.Context, token *integrations.Token, as
 		Issues []struct {
 			Key    string `json:"key"`
 			Fields struct {
-				Summary         string `json:"summary"`
-				Description     any    `json:"description"` // в Jira Cloud это ADF-объект, в Server — строка
-				Status          struct{ Name string } `json:"status"`
+				Summary         string                 `json:"summary"`
+				Description     any                    `json:"description"`
+				Status          struct{ Name string }  `json:"status"`
 				Priority        *struct{ Name string } `json:"priority"`
 				IssueType       *struct{ Name string } `json:"issuetype"`
-				DueDate         string `json:"duedate"`
-				TimeOriginalSec int    `json:"timeoriginalestimate"`
-				TimeSpentSec    int    `json:"timespent"`
+				DueDate         string                 `json:"duedate"`
+				TimeOriginalSec int                    `json:"timeoriginalestimate"`
+				TimeSpentSec    int                    `json:"timespent"`
 			} `json:"fields"`
 		} `json:"issues"`
 	}
@@ -173,9 +159,6 @@ func (p *Provider) FetchTasks(ctx context.Context, token *integrations.Token, as
 			est := float64(iss.Fields.TimeOriginalSec) / 3600.0
 			t.EstimatedHours = &est
 		} else if h, ok := ParseHoursFromText(t.Title + " " + t.Description); ok {
-			// Fallback: автор задачи мог написать «Время на задачу 10 часов»
-			// в описании, не заполняя поле Original Estimate в Jira.
-			// Парсим из текста — это лучше чем дефолт 4ч из планировщика.
 			est := h
 			t.EstimatedHours = &est
 		}
@@ -188,10 +171,6 @@ func (p *Provider) FetchTasks(ctx context.Context, token *integrations.Token, as
 	return tasks, nil
 }
 
-// flattenDescription — Jira Cloud отдаёт описание как ADF (Atlassian Document
-// Format) — вложенный JSON-объект с типами text/heading/paragraph/list/...
-// На MVP не парсим всю структуру: вытаскиваем все строки `text` из листьев.
-// Если description пришёл строкой (Server/legacy) — возвращаем как есть.
 func flattenDescription(d any) string {
 	switch v := d.(type) {
 	case nil:
@@ -220,7 +199,6 @@ func walkADF(node map[string]any, sb *strings.Builder) {
 				walkADF(child, sb)
 			}
 		}
-		// Между «параграфами» — перенос.
 		if t, _ := node["type"].(string); t == "paragraph" || t == "heading" {
 			sb.WriteString("\n")
 		}

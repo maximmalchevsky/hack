@@ -14,7 +14,6 @@ import (
 	"worktimesync/internal/repository"
 )
 
-// TeamService — список команд, состав, командная карта доступности.
 type TeamService struct {
 	pool     *pgxpool.Pool
 	teams    *repository.TeamRepo
@@ -37,10 +36,6 @@ func (s *TeamService) List(ctx context.Context) ([]domain.Team, error) {
 	return s.teams.List(ctx)
 }
 
-// ListVisible — RBAC-фильтр списка команд:
-//   - admin/hr/analyst — все команды
-//   - manager/pm — только где он owner ИЛИ участник
-//   - employee — только где он участник
 func (s *TeamService) ListVisible(ctx context.Context, role string, empID uuid.UUID) ([]domain.Team, error) {
 	switch role {
 	case "admin", "hr", "analyst":
@@ -70,10 +65,6 @@ func (s *TeamService) ListVisible(ctx context.Context, role string, empID uuid.U
 	return out, rows.Err()
 }
 
-// ListAllForMeetings — все команды организации (для межкомандных встреч).
-// Доступ — у тех же ролей, что и стандартный propose-meeting (manager/pm/hr/admin).
-// employee и analyst отдельно сюда не пускаем — у них нет права создавать
-// встречи.
 func (s *TeamService) ListAllForMeetings(ctx context.Context, role string) ([]domain.Team, error) {
 	switch role {
 	case "admin", "hr", "pm", "manager":
@@ -95,15 +86,12 @@ func (s *TeamService) Members(ctx context.Context, teamID uuid.UUID) ([]domain.T
 	return s.teams.Members(ctx, teamID)
 }
 
-// --- CRUD команд + участники + руководитель ---
-
 var (
 	ErrTeamNotFound     = errors.New("team: not found")
 	ErrTeamForbidden    = errors.New("team: forbidden")
 	ErrTeamNameRequired = errors.New("team: name required")
 )
 
-// canManage — admin/hr трогают любые команды; pm/manager — только свои (owner_id).
 func (s *TeamService) canManage(role string, team *domain.Team, viewerEmpID uuid.UUID) bool {
 	switch role {
 	case "admin", "hr":
@@ -114,7 +102,6 @@ func (s *TeamService) canManage(role string, team *domain.Team, viewerEmpID uuid
 	return false
 }
 
-// canCreate — кто вообще может создавать новые команды.
 func canCreateTeam(role string) bool {
 	switch role {
 	case "admin", "hr", "pm", "manager":
@@ -137,7 +124,6 @@ func (s *TeamService) Create(ctx context.Context, in CreateTeamInput) (*domain.T
 	if in.Name == "" {
 		return nil, ErrTeamNameRequired
 	}
-	// Если pm/manager создаёт без явного owner — назначаем себя.
 	owner := in.OwnerEmpID
 	if owner == nil && (in.ViewerRole == "pm" || in.ViewerRole == "manager") && in.ViewerEmpID != uuid.Nil {
 		v := in.ViewerEmpID
@@ -149,7 +135,7 @@ func (s *TeamService) Create(ctx context.Context, in CreateTeamInput) (*domain.T
 type UpdateTeamInput struct {
 	TeamID      uuid.UUID
 	Name        *string
-	OwnerEmpID  *uuid.UUID // nil + OwnerSet=true → отвязать
+	OwnerEmpID  *uuid.UUID
 	OwnerSet    bool
 	ViewerRole  string
 	ViewerEmpID uuid.UUID
@@ -214,8 +200,6 @@ func (s *TeamService) RemoveMember(ctx context.Context, teamID, employeeID uuid.
 		}
 		return err
 	}
-	// Если этот сотрудник назначен manager для кого-то — отвязываем,
-	// чтобы потерянных связей не оставалось.
 	_, _ = s.pool.Exec(ctx, `
 		UPDATE employees SET manager_id = NULL
 		WHERE manager_id = $1
@@ -224,8 +208,6 @@ func (s *TeamService) RemoveMember(ctx context.Context, teamID, employeeID uuid.
 	return nil
 }
 
-// SetManager — назначает выбранного участника руководителем команды
-// и проставляет его manager_id всем остальным участникам.
 func (s *TeamService) SetManager(ctx context.Context, teamID, managerEmpID uuid.UUID, viewerRole string, viewerEmpID uuid.UUID) error {
 	cur, err := s.teams.ByID(ctx, teamID)
 	if err != nil {
@@ -237,45 +219,32 @@ func (s *TeamService) SetManager(ctx context.Context, teamID, managerEmpID uuid.
 	if !s.canManage(viewerRole, cur, viewerEmpID) {
 		return ErrTeamForbidden
 	}
-	// 1. owner_id команды.
 	owner := managerEmpID
 	if _, err := s.teams.Update(ctx, teamID, nil, &owner, true); err != nil {
 		return err
 	}
-	// 2. manager_id всех остальных участников.
 	return s.teams.SetManagerForMembers(ctx, teamID, managerEmpID)
 }
 
-// MemberAvailability — состояние клеток heatmap для одного сотрудника
-// в одном дне × часовой сетке.
 type MemberAvailability struct {
 	EmployeeID uuid.UUID    `json:"employee_id"`
 	FullName   string       `json:"full_name"`
 	Timezone   string       `json:"timezone,omitempty"`
-	Cells      []string     `json:"cells"` // длина = len(hours) × len(days). state: free|busy|conflict|off
+	Cells      []string     `json:"cells"`
 	Details    []CellDetail `json:"details"`
 }
 
-// CellDetail — содержимое одной ячейки heatmap для tooltip-а на фронте.
-// Длина массива details = длине cells; индексы совпадают.
 type CellDetail struct {
 	Events    []CellEventRef    `json:"events,omitempty"`
 	Exception *CellExceptionRef `json:"exception,omitempty"`
-	// Note — короткое объяснение для off-ячеек:
-	//   "before_work" — до начала рабочего дня
-	//   "after_work"  — после конца рабочего дня
-	//   "day_off"     — нерабочий день
-	//   "no_profile"  — у сотрудника нет графика
-	Note string `json:"note,omitempty"`
+	Note      string            `json:"note,omitempty"`
 }
 
 type CellEventRef struct {
-	Title   string    `json:"title"`
-	StartAt time.Time `json:"start_at"`
-	EndAt   time.Time `json:"end_at"`
-	// Category — категория события (Стендапы / Ревью / Задача / Фокус-время / …).
-	// Фронт по ней различает task-блоки от обычных встреч.
-	Category string `json:"category,omitempty"`
+	Title    string    `json:"title"`
+	StartAt  time.Time `json:"start_at"`
+	EndAt    time.Time `json:"end_at"`
+	Category string    `json:"category,omitempty"`
 }
 
 type CellExceptionRef struct {
@@ -285,27 +254,16 @@ type CellExceptionRef struct {
 	EndAt   time.Time `json:"end_at"`
 }
 
-// AvailabilityResponse — структура ответа /teams/:id/availability.
 type AvailabilityResponse struct {
-	TeamID    uuid.UUID            `json:"team_id"`
-	From      time.Time            `json:"from"`
-	To        time.Time            `json:"to"`
-	Hours     []int                `json:"hours"`
-	Days      []string             `json:"days"`
-	Rows      []MemberAvailability `json:"rows"`
-	Timezone  string               `json:"timezone"` // TZ просмотра
+	TeamID   uuid.UUID            `json:"team_id"`
+	From     time.Time            `json:"from"`
+	To       time.Time            `json:"to"`
+	Hours    []int                `json:"hours"`
+	Days     []string             `json:"days"`
+	Rows     []MemberAvailability `json:"rows"`
+	Timezone string               `json:"timezone"`
 }
 
-// Availability — строит карту доступности команды.
-//
-// На дне 5 модель грубая: 5 дней × 11 часов (8:00..18:00).
-// Состояния:
-//   - off — день/час не входит в рабочий профиль
-//   - free — рабочий час без событий
-//   - busy — событие в рабочем часе
-//   - conflict — событие, выходящее за пределы профиля (или в выходной)
-//
-// Если у сотрудника нет активного профиля, всё помечается off.
 func (s *TeamService) Availability(ctx context.Context, teamID uuid.UUID, viewerTZ string) (*AvailabilityResponse, error) {
 	loc, err := time.LoadLocation(viewerTZ)
 	if err != nil || loc == nil {
@@ -313,19 +271,14 @@ func (s *TeamService) Availability(ctx context.Context, teamID uuid.UUID, viewer
 	}
 
 	now := time.Now().In(loc)
-	// неделя с понедельника текущей недели
 	weekday := int(now.Weekday())
 	if weekday == 0 {
-		weekday = 7 // воскресенье — последний
+		weekday = 7
 	}
 	monday := time.Date(now.Year(), now.Month(), now.Day()-weekday+1, 0, 0, 0, 0, loc)
 	sunday := monday.AddDate(0, 0, 6).Add(24*time.Hour - time.Second)
 
 	hours := []int{8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18}
-	// Показываем все 7 дней — выходные дни сотрудника определяются по его
-	// work_profile (если в дне нет рабочих часов → клетки = "off"). Это даёт
-	// корректный heatmap для сотрудников с нестандартными графиками
-	// (например, Вт–Сб или Пн–Сб).
 	days := []string{"ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"}
 
 	resp := &AvailabilityResponse{
@@ -372,8 +325,6 @@ func (s *TeamService) Availability(ctx context.Context, teamID uuid.UUID, viewer
 func fillRow(cells []string, details []CellDetail, hours []int, weekStart time.Time, loc *time.Location,
 	profile *domain.WorkProfile, events []domain.CalendarEvent, excs []domain.TimeException,
 ) {
-	// 7 дней недели. В нерабочие дни сотрудника (profile.DaysOfWeek == nil)
-	// все клетки автоматически окажутся "off".
 	for dayIdx := 0; dayIdx < 7; dayIdx++ {
 		dayStart := weekStart.AddDate(0, 0, dayIdx)
 
@@ -412,7 +363,6 @@ func fillRow(cells []string, details []CellDetail, hours []int, weekStart time.T
 			cellStart := time.Date(dayStart.Year(), dayStart.Month(), dayStart.Day(), hour, 0, 0, 0, loc)
 			cellEnd := cellStart.Add(time.Hour)
 
-			// 1. Исключение (отпуск/больничный) — off + details
 			if ex := excInCell(cellStart, cellEnd, excs); ex != nil {
 				cells[cellIdx] = "off"
 				details[cellIdx].Exception = ex
@@ -422,20 +372,16 @@ func fillRow(cells []string, details []CellDetail, hours []int, weekStart time.T
 			overlapping := eventsOverlapping(cellStart, cellEnd, events)
 			inWork := !workStart.IsZero() && !cellStart.Before(workStart) && !cellEnd.After(workEnd)
 			busy := len(overlapping) > 0
-			// Double-booking: два и более event'а реально пересекаются по времени.
 			doubleBooked := hasTimeOverlap(overlapping)
 
 			switch {
 			case doubleBooked:
-				// Два события одновременно — явный конфликт (red).
 				cells[cellIdx] = "conflict"
 				details[cellIdx].Events = overlapping
 			case busy && !inWork:
-				// Событие вне рабочего графика — тоже конфликт.
 				cells[cellIdx] = "conflict"
 				details[cellIdx].Events = overlapping
 			case busy:
-				// Все события в ячейке — task/focus блоки? Отдельный state.
 				if allTaskBlocks(overlapping) {
 					cells[cellIdx] = "task"
 				} else {
@@ -452,7 +398,6 @@ func fillRow(cells []string, details []CellDetail, hours []int, weekStart time.T
 	}
 }
 
-// excInCell — возвращает первое пересекающееся исключение для ячейки.
 func excInCell(s, e time.Time, excs []domain.TimeException) *CellExceptionRef {
 	for _, ex := range excs {
 		if s.Before(ex.EndAt) && ex.StartAt.Before(e) {
@@ -467,10 +412,6 @@ func excInCell(s, e time.Time, excs []domain.TimeException) *CellExceptionRef {
 	return nil
 }
 
-// eventsOverlapping — все события, попадающие в ячейку.
-// hasTimeOverlap — есть ли в наборе хотя бы одна пара событий, реально
-// пересекающихся по времени (двойное бронирование).
-// Если два события стоят встык (10:00–11:00 и 11:00–12:00) — это НЕ конфликт.
 func hasTimeOverlap(events []CellEventRef) bool {
 	if len(events) < 2 {
 		return false
@@ -485,8 +426,6 @@ func hasTimeOverlap(events []CellEventRef) bool {
 	return false
 }
 
-// allTaskBlocks — true если ВСЕ события в ячейке — task/focus блоки
-// (созданные planner'ом). Это позволяет UI красить ячейку отдельным цветом.
 func allTaskBlocks(events []CellEventRef) bool {
 	if len(events) == 0 {
 		return false
@@ -546,11 +485,6 @@ func eventInExc(s, e time.Time, excs []domain.TimeException) bool {
 	return false
 }
 
-// firstActiveExceptionKind — возвращает kind первого подходящего exception
-// (vacation, sick_leave, business_trip, personal_hours, custom). Пустая строка
-// если ни один не совпадает — это значит, что вызывающая функция уже определила
-// «in_exception», но не нашла конкретный kind (что не должно случаться,
-// но защищаемся).
 func firstActiveExceptionKind(s, e time.Time, excs []domain.TimeException) string {
 	for _, ex := range excs {
 		if s.Before(ex.EndAt) && ex.StartAt.Before(e) {
@@ -572,8 +506,6 @@ func overlapsAny(s, e time.Time, evs []domain.CalendarEvent) bool {
 	return false
 }
 
-// firstOverlap — возвращает первое пересекающееся событие или nil.
-// Используется чтобы понять «занят встречей» vs «занят задачей» по category.
 func firstOverlap(s, e time.Time, evs []domain.CalendarEvent) *domain.CalendarEvent {
 	for i := range evs {
 		ev := &evs[i]
@@ -587,45 +519,20 @@ func firstOverlap(s, e time.Time, evs []domain.CalendarEvent) *domain.CalendarEv
 	return nil
 }
 
-// keep analytics import in use (для будущего FindMeetingWindows и пр.)
 var _ = analytics.DefaultWeights
 
-// MeetingParticipant — участник встречи в слоте с человеко-читаемой причиной.
 type MeetingParticipant struct {
-	EmployeeID string `json:"employee_id"`
-	FullName   string `json:"full_name"`
-	// Reason заполняется только для unavailable:
-	//   busy             — пересечение с событием
-	//   in_exception     — отпуск/больничный/командировка
-	//   outside_hours    — слот вне рабочих часов профиля
-	//   no_profile       — у сотрудника нет активного work_profile
-	Reason string `json:"reason,omitempty"`
-	// ExceptionKind заполняется только когда Reason="in_exception":
-	//   vacation, sick_leave, business_trip, personal_hours, custom.
-	// Фронт показывает понятный текст «отпуск/больничный/командировка».
+	EmployeeID    string `json:"employee_id"`
+	FullName      string `json:"full_name"`
+	Reason        string `json:"reason,omitempty"`
 	ExceptionKind string `json:"exception_kind,omitempty"`
-	// BusyKind — детализация Reason="busy":
-	//   meeting — обычная встреча
-	//   task    — план задачи (Jira) → задача важнее, конфликт критичный
-	//   focus   — focus-time блок (high-priority задача)
-	// Если пусто при Reason=busy — fallback на meeting.
-	BusyKind string `json:"busy_kind,omitempty"`
-	// BusyTitle — заголовок события которое занимает слот. Например
-	// «Daily Platform» или «План: PROJ-123 — Реализовать webhook».
-	BusyTitle string `json:"busy_title,omitempty"`
-	// LocalTime — окно встречи В TZ участника (формат 15:04–15:04).
-	// Пример: для участника в Лиссабоне, если встреча 10:00–11:00 МСК,
-	// здесь будет "07:00–08:00". Полезно когда TZ участника отличается от TZ
-	// инициатора — для одинаковых TZ фронт это поле скрывает.
-	LocalTime string `json:"local_time,omitempty"`
-	// WorkHours — рабочие часы участника в этот день недели в его же TZ.
-	// Пример: "10:00–18:00". Пусто, если профиля нет.
-	WorkHours string `json:"work_hours,omitempty"`
-	// Timezone — TZ профиля участника, чтобы фронт мог подписать «(Europe/Lisbon)».
-	Timezone string `json:"timezone,omitempty"`
+	BusyKind      string `json:"busy_kind,omitempty"`
+	BusyTitle     string `json:"busy_title,omitempty"`
+	LocalTime     string `json:"local_time,omitempty"`
+	WorkHours     string `json:"work_hours,omitempty"`
+	Timezone      string `json:"timezone,omitempty"`
 }
 
-// MeetingWindow — слот, в котором доступно максимум участников команды.
 type MeetingWindow struct {
 	StartAt        time.Time            `json:"start_at"`
 	EndAt          time.Time            `json:"end_at"`
@@ -635,18 +542,14 @@ type MeetingWindow struct {
 	Unavailable    []MeetingParticipant `json:"unavailable"`
 }
 
-// FindWindowsInput — параметры поиска окон.
 type FindWindowsInput struct {
 	TeamID      uuid.UUID
-	DurationMin int    // длительность встречи в минутах (по умолч. 60)
-	Days        int    // горизонт поиска в днях вперёд (по умолч. 7)
-	ViewerTZ    string // TZ для рендеринга и фильтрации
-	TopN        int    // сколько вернуть лучших окон (по умолч. 3)
+	DurationMin int
+	Days        int
+	ViewerTZ    string
+	TopN        int
 }
 
-// FindCrossWindowsInput — параметры поиска окон для произвольного списка
-// сотрудников (межкомандная встреча). Используется когда участники не из одной
-// команды.
 type FindCrossWindowsInput struct {
 	EmployeeIDs []uuid.UUID
 	DurationMin int
@@ -670,15 +573,6 @@ type memberCtx struct {
 	name    string
 }
 
-// FindWindows — ищет лучшие слоты для встречи команды.
-//
-// Алгоритм:
-//  1. Для каждого сотрудника команды собираем events + exceptions.
-//  2. Идём по 30-минутной сетке от now+1ч до now+Days*24ч.
-//  3. Для каждого слота длиной DurationMin считаем участников, у которых:
-//     a) слот входит в рабочие часы их профиля
-//     b) слот не пересекается с событиями / исключениями
-//  4. Берём топ-N по убыванию AvailableCount + раньше по времени.
 func (s *TeamService) FindWindows(ctx context.Context, in FindWindowsInput) ([]MeetingWindow, error) {
 	if in.DurationMin <= 0 {
 		in.DurationMin = 60
@@ -717,10 +611,6 @@ func (s *TeamService) FindWindows(ctx context.Context, in FindWindowsInput) ([]M
 	return s.findWindowsCore(memberData, now, end, duration, in.TopN), nil
 }
 
-// FindWindowsForEmployees — поиск окон для произвольного списка employee_ids.
-// Используется при создании межкомандных встреч. Дедуплицирует список и
-// сохраняет порядок участников такой же как пришёл. Запрос имён сотрудников —
-// один SQL.
 func (s *TeamService) FindWindowsForEmployees(ctx context.Context, in FindCrossWindowsInput) ([]MeetingWindow, error) {
 	if in.DurationMin <= 0 {
 		in.DurationMin = 60
@@ -739,7 +629,6 @@ func (s *TeamService) FindWindowsForEmployees(ctx context.Context, in FindCrossW
 		loc = time.UTC
 	}
 
-	// Дедупликация empIDs (могут прийти дубликаты при выборе пересекающихся команд).
 	uniq := make(map[uuid.UUID]struct{}, len(in.EmployeeIDs))
 	empIDs := make([]uuid.UUID, 0, len(in.EmployeeIDs))
 	for _, id := range in.EmployeeIDs {
@@ -756,7 +645,6 @@ func (s *TeamService) FindWindowsForEmployees(ctx context.Context, in FindCrossW
 		return nil, nil
 	}
 
-	// Резолвим имена одним запросом, иначе будет N+1.
 	names, err := s.resolveEmployeeNames(ctx, empIDs)
 	if err != nil {
 		return nil, fmt.Errorf("resolve names: %w", err)
@@ -778,8 +666,6 @@ func (s *TeamService) FindWindowsForEmployees(ctx context.Context, in FindCrossW
 	return s.findWindowsCore(memberData, now, end, duration, in.TopN), nil
 }
 
-// buildMemberCtx — собирает профиль/события/исключения сотрудника в memberCtx.
-// Используется обоими find-windows вариантами (team + employees).
 func (s *TeamService) buildMemberCtx(ctx context.Context, empID uuid.UUID, name string, from, to time.Time) memberCtx {
 	mc := memberCtx{empID: empID, name: name}
 	if wp, err := s.profiles.Active(ctx, empID); err == nil {
@@ -798,7 +684,6 @@ func (s *TeamService) buildMemberCtx(ctx context.Context, empID uuid.UUID, name 
 	return mc
 }
 
-// resolveEmployeeNames — один SQL для пачки empIDs → map[id]→full_name.
 func (s *TeamService) resolveEmployeeNames(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]string, error) {
 	out := make(map[uuid.UUID]string, len(ids))
 	if len(ids) == 0 {
@@ -824,12 +709,6 @@ func (s *TeamService) resolveEmployeeNames(ctx context.Context, ids []uuid.UUID)
 	return out, rows.Err()
 }
 
-// findWindowsCore — общий core-алгоритм поиска окон. Принимает уже подготовленный
-// список memberCtx + параметры. Возвращает топ-N MeetingWindow.
-//
-// Вынесено в общий метод, чтобы FindWindows (по команде) и FindWindowsForEmployees
-// (по произвольному списку) использовали одинаковую логику candidate-генерации
-// и сортировки.
 func (s *TeamService) findWindowsCore(
 	memberData []memberCtx,
 	now, end time.Time,
@@ -905,7 +784,6 @@ func (s *TeamService) findWindowsCore(
 
 	sortCandidates(candidates)
 
-	// Diversify по дням — тот же алгоритм что в FindWindows.
 	seenDays := map[string]struct{}{}
 	primary := make([]candidateWindow, 0, topN)
 	overflow := make([]candidateWindow, 0, len(candidates))
@@ -946,8 +824,6 @@ func (s *TeamService) findWindowsCore(
 	return out
 }
 
-// memberStatus — пустая строка если сотрудник свободен, иначе код причины:
-// "no_profile" / "outside_hours" / "in_exception" / "busy".
 func memberStatus(start, end time.Time, profile *domain.WorkProfile,
 	events []domain.CalendarEvent, excs []domain.TimeException,
 ) string {
@@ -1001,11 +877,6 @@ func memberStatus(start, end time.Time, profile *domain.WorkProfile,
 	return ""
 }
 
-// participantLocalContext — возвращает локальное окно встречи в TZ участника,
-// его рабочие часы того же дня и саму TZ. Используется фронтом для
-// «У X встреча будет в 07:00, его график 10:00–18:00».
-//
-// Если профиля нет — пустые строки (на UI получим «—»).
 func participantLocalContext(start, end time.Time, profile *domain.WorkProfile) (localTime, workHours, tz string) {
 	if profile == nil {
 		return "", "", ""
@@ -1107,12 +978,10 @@ func alignTo30Min(t time.Time) time.Time {
 }
 
 func sortCandidates(cs []candidateWindow) {
-	// insertion sort — для < 1000 элементов достаточно.
 	for i := 1; i < len(cs); i++ {
 		for j := i; j > 0; j-- {
 			a, b := cs[j-1], cs[j]
 			availA, availB := len(a.available), len(b.available)
-			// больше available → раньше; при равенстве — раньше по времени.
 			if availA < availB || (availA == availB && a.start.After(b.start)) {
 				cs[j-1], cs[j] = cs[j], cs[j-1]
 			} else {

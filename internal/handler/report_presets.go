@@ -39,11 +39,10 @@ func (h *ReportPresetsHandler) list(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"presets": res})
 }
 
-// presetRequest — body для create / update. Все поля optional.
 type presetRequest struct {
-	Name    string                       `json:"name"`
-	Kind    string                       `json:"kind"`
-	Columns []string                     `json:"columns"`
+	Name    string                      `json:"name"`
+	Kind    string                      `json:"kind"`
+	Columns []string                    `json:"columns"`
 	Filters service.ReportPresetFilters `json:"filters"`
 }
 

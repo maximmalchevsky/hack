@@ -14,7 +14,6 @@ import (
 	"worktimesync/internal/domain"
 )
 
-// WorkProfileRepo — версионированные рабочие профили.
 type WorkProfileRepo struct {
 	pool *pgxpool.Pool
 }
@@ -23,17 +22,14 @@ func NewWorkProfileRepo(pool *pgxpool.Pool) *WorkProfileRepo {
 	return &WorkProfileRepo{pool: pool}
 }
 
-// CreateInput — параметры новой версии профиля.
 type CreateProfileInput struct {
 	EmployeeID uuid.UUID
 	DaysOfWeek domain.DaysOfWeek
 	Timezone   string
 	WorkFormat domain.WorkFormat
-	Source     string // manual / hr_sync
+	Source     string
 }
 
-// CreateNewVersion — закрывает активную версию (valid_to = now) и создаёт новую.
-// Атомарно через транзакцию.
 func (r *WorkProfileRepo) CreateNewVersion(ctx context.Context, in CreateProfileInput) (*domain.WorkProfile, error) {
 	if !in.WorkFormat.Valid() {
 		return nil, fmt.Errorf("invalid work_format: %s", in.WorkFormat)
@@ -53,7 +49,6 @@ func (r *WorkProfileRepo) CreateNewVersion(ctx context.Context, in CreateProfile
 
 	now := time.Now().UTC()
 
-	// Закрываем активную версию, если есть.
 	if _, err := tx.Exec(ctx, `
 		UPDATE work_profiles
 		SET valid_to = $1
@@ -80,7 +75,6 @@ func (r *WorkProfileRepo) CreateNewVersion(ctx context.Context, in CreateProfile
 		return nil, fmt.Errorf("insert profile: %w", err)
 	}
 
-	// Триггерим last_profile_update_at в employees.
 	if _, err := tx.Exec(ctx, `
 		UPDATE employees
 		SET last_profile_update_at = $1, last_confirmed_at = $1
@@ -95,7 +89,6 @@ func (r *WorkProfileRepo) CreateNewVersion(ctx context.Context, in CreateProfile
 	return wp, nil
 }
 
-// Active — текущая активная версия (valid_to IS NULL). nil если ни одной нет.
 func (r *WorkProfileRepo) Active(ctx context.Context, employeeID uuid.UUID) (*domain.WorkProfile, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, employee_id, valid_from, valid_to, days_of_week,
@@ -115,7 +108,6 @@ func (r *WorkProfileRepo) Active(ctx context.Context, employeeID uuid.UUID) (*do
 	return wp, nil
 }
 
-// History — все версии профиля по убыванию created_at.
 func (r *WorkProfileRepo) History(ctx context.Context, employeeID uuid.UUID, limit int) ([]domain.WorkProfile, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -146,10 +138,10 @@ func (r *WorkProfileRepo) History(ctx context.Context, employeeID uuid.UUID, lim
 
 func scanWorkProfile(s rowScanner) (*domain.WorkProfile, error) {
 	var (
-		wp       domain.WorkProfile
-		validTo  *time.Time
-		daysRaw  []byte
-		format   string
+		wp      domain.WorkProfile
+		validTo *time.Time
+		daysRaw []byte
+		format  string
 	)
 	if err := s.Scan(
 		&wp.ID, &wp.EmployeeID, &wp.ValidFrom, &validTo, &daysRaw,

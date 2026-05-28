@@ -61,7 +61,6 @@ func (h *PulseHandler) submit(c fiber.Ctx) error {
 	return c.JSON(entry)
 }
 
-// team — менеджер видит pulse-ответы своих сотрудников.
 func (h *PulseHandler) team(c fiber.Ctx) error {
 	role := middleware.CurrentRole(c)
 	if role != domain.RoleManager && role != domain.RoleAdmin && role != domain.RoleHR && role != domain.RolePM {

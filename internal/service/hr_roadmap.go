@@ -9,7 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// HRRoadmapItem — одна строка дорожной карты HR: сотрудник + рекомендуемое действие.
 type HRRoadmapItem struct {
 	EmployeeID          uuid.UUID  `json:"employee_id"`
 	FullName            string     `json:"full_name"`
@@ -18,9 +17,9 @@ type HRRoadmapItem struct {
 	Role                string     `json:"role"`
 	LastProfileUpdateAt *time.Time `json:"last_profile_update_at,omitempty"`
 	DaysSinceUpdate     int        `json:"days_since_update"`
-	Action              string     `json:"action"`            // request_confirm | request_update | check_hr | review_format
-	Priority            string     `json:"priority"`          // low | medium | high | critical
-	Reason              string     `json:"reason"`            // человеко-читаемое описание
+	Action              string     `json:"action"`
+	Priority            string     `json:"priority"`
+	Reason              string     `json:"reason"`
 }
 
 type HRRoadmapService struct {
@@ -31,15 +30,6 @@ func NewHRRoadmapService(pool *pgxpool.Pool) *HRRoadmapService {
 	return &HRRoadmapService{pool: pool}
 }
 
-// Build — собирает приоритезированный список действий для HR.
-// Стратегия:
-//   - days_since_update > 90 → critical, request_update
-//   - 60-90 → high, request_update
-//   - 30-60 → medium, request_confirm
-//   - HR-формат office, profile remote → high, review_format
-//   - нет профиля вообще → critical, request_update
-//
-// Возвращает топ-N по убыванию приоритета.
 func (s *HRRoadmapService) Build(ctx context.Context, limit int) ([]HRRoadmapItem, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
@@ -86,7 +76,6 @@ func (s *HRRoadmapService) Build(ctx context.Context, limit int) ([]HRRoadmapIte
 		days := int(time.Since(*lastUpd).Hours() / 24)
 		it.DaysSinceUpdate = days
 
-		// 1. mismatch HR vs profile — отдельный приоритет.
 		if hrFormat != nil && activeFormat != nil && *hrFormat != *activeFormat && *hrFormat == "office" && *activeFormat == "remote" {
 			it.Action = "review_format"
 			it.Priority = "high"
@@ -95,7 +84,6 @@ func (s *HRRoadmapService) Build(ctx context.Context, limit int) ([]HRRoadmapIte
 			continue
 		}
 
-		// 2. по возрасту.
 		switch {
 		case days > 90:
 			it.Action = "request_update"
@@ -110,7 +98,7 @@ func (s *HRRoadmapService) Build(ctx context.Context, limit int) ([]HRRoadmapIte
 			it.Priority = "medium"
 			it.Reason = "Прошло > 30 дней — запросить подтверждение"
 		default:
-			continue // свежий профиль — в roadmap не попадает
+			continue
 		}
 		items = append(items, it)
 	}

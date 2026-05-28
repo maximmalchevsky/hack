@@ -1,5 +1,3 @@
-// Команды Telegram-бота: /today, /tomorrow, /pulse, /team.
-// Только чтение БД + ответ на pulse через inline-клавиатуру.
 package notify
 
 import (
@@ -15,8 +13,6 @@ import (
 	tele "gopkg.in/telebot.v3"
 )
 
-// resolveEmployee — по chat_id ищет привязанного пользователя и возвращает (user_id, employee_id, role, tz).
-// Если не привязан — возвращает понятную ошибку, callee должен отослать понятное сообщение.
 func (b *Bot) resolveEmployee(ctx context.Context, chatID int64) (uuid.UUID, uuid.UUID, string, *time.Location, error) {
 	var (
 		userID, empID uuid.UUID
@@ -45,15 +41,12 @@ func (b *Bot) resolveEmployee(ctx context.Context, chatID int64) (uuid.UUID, uui
 
 var errNotLinked = errors.New("not linked")
 
-// notLinkedMsg — единый текст, когда пользователь не привязан.
 const notLinkedMsg = "Этот чат не привязан к аккаунту Workie. Открой свой профиль в системе → «Каналы уведомлений» → «Подключить Telegram»."
 
-// onToday — встречи сегодня в TZ пользователя.
 func (b *Bot) onToday(c tele.Context) error {
 	return b.sendDayMeetings(c, 0, "сегодня")
 }
 
-// onTomorrow — встречи завтра.
 func (b *Bot) onTomorrow(c tele.Context) error {
 	return b.sendDayMeetings(c, 1, "завтра")
 }
@@ -116,7 +109,6 @@ func (b *Bot) sendDayMeetings(c tele.Context, dayOffset int, label string) error
 	return c.Send(sb.String(), tele.ModeMarkdown)
 }
 
-// onPulse — если пора отвечать, отдаём inline-клавиатуру 1..5; иначе говорим когда следующий.
 func (b *Bot) onPulse(c tele.Context) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -128,7 +120,6 @@ func (b *Bot) onPulse(c tele.Context) error {
 		return c.Send("Не получилось.")
 	}
 
-	// Берём дату последнего ответа, чтобы решить — спрашивать или нет.
 	var lastAt *time.Time
 	if err := b.pool.QueryRow(ctx, `
 		SELECT created_at FROM pulse_responses
@@ -145,7 +136,6 @@ func (b *Bot) onPulse(c tele.Context) error {
 		}
 	}
 
-	// Inline-клавиатура: пять кнопок-эмодзи.
 	markup := &tele.ReplyMarkup{}
 	rows := []tele.Row{}
 	rows = append(rows, markup.Row(
@@ -163,7 +153,6 @@ func (b *Bot) onPulse(c tele.Context) error {
 	)
 }
 
-// onTeam — для менеджеров: средний score + сколько в красной зоне.
 func (b *Bot) onTeam(c tele.Context) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -180,7 +169,6 @@ func (b *Bot) onTeam(c tele.Context) error {
 		return c.Send("Команда доступна руководителю, HR, PM или админу.")
 	}
 
-	// Кол-во сотрудников в командах + средний последний pulse + красная зона.
 	var members, redZone, noData int
 	var avgScore *float64
 	err = b.pool.QueryRow(ctx, `
@@ -215,7 +203,6 @@ func (b *Bot) onTeam(c tele.Context) error {
 		avgStr = fmt.Sprintf("%.1f / 5", *avgScore)
 	}
 
-	// Считаем число конфликтов команды за неделю (быстрый count).
 	var conflicts int
 	_ = b.pool.QueryRow(ctx, `
 		SELECT count(*) FROM calendar_events ce
@@ -245,7 +232,6 @@ func isManagerRole(role string) bool {
 	return false
 }
 
-// onCallback — клик по inline-кнопкам. Сейчас обрабатываем только pulse:N.
 func (b *Bot) onCallback(c tele.Context) error {
 	cb := c.Callback()
 	if cb == nil {
@@ -273,7 +259,6 @@ func (b *Bot) onCallback(c tele.Context) error {
 	}
 
 	if b.pulse == nil {
-		// Pulse-сервис не подключен — пишем в БД напрямую, без бизнес-валидации.
 		_, _ = b.pool.Exec(ctx, `
 			INSERT INTO pulse_responses (employee_id, score) VALUES ($1, $2)
 		`, empID, score)
@@ -283,14 +268,11 @@ func (b *Bot) onCallback(c tele.Context) error {
 		}
 	}
 
-	// Отвечаем коротко на callback + редактируем сообщение, чтобы кнопки исчезли.
 	emoji := map[int]string{1: "😞", 2: "😐", 3: "🙂", 4: "😊", 5: "🤩"}[score]
 	_ = c.Edit(fmt.Sprintf("Спасибо! Записал %s (%d/5). Следующий опрос — через 2 недели.", emoji, score))
 	return c.Respond(&tele.CallbackResponse{Text: "Записал"})
 }
 
-// escapeMd — упрощённое экранирование для tele.ModeMarkdown.
-// Telegram «classic» markdown понимает * _ ` [ ; экранируем основные.
 func escapeMd(s string) string {
 	r := strings.NewReplacer(
 		"*", "",

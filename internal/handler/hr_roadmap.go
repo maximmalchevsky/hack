@@ -29,7 +29,6 @@ func (h *HRRoadmapHandler) list(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"items": items})
 }
 
-// NotifyStaleRequest — параметры массовой рассылки запросов на обновление.
 type NotifyStaleRequest struct {
 	MinDaysSince int `json:"min_days_since,omitempty"`
 }

@@ -14,7 +14,6 @@ import (
 	"worktimesync/internal/repository"
 )
 
-// Сервисные ошибки.
 var (
 	ErrInvalidWorkFormat = errors.New("profile: invalid work_format")
 	ErrInvalidTimeRange  = errors.New("profile: end must be after start")
@@ -45,7 +44,6 @@ type UpdateProfileInput struct {
 	WorkFormat domain.WorkFormat
 }
 
-// hhmm — формат времени "HH:MM".
 var hhmmRE = regexp.MustCompile(`^\d{2}:\d{2}$`)
 
 func validateDayHours(d *domain.DayHours) error {
@@ -78,7 +76,6 @@ func validateDaysOfWeek(d domain.DaysOfWeek) error {
 	return nil
 }
 
-// UpdateProfile — создаёт новую версию профиля. Если активной не было — создаёт первую.
 func (s *ProfileService) UpdateProfile(ctx context.Context, in UpdateProfileInput, actorUserID *uuid.UUID) (*domain.WorkProfile, error) {
 	if !in.WorkFormat.Valid() {
 		return nil, ErrInvalidWorkFormat
@@ -128,8 +125,6 @@ func (s *ProfileService) History(ctx context.Context, employeeID uuid.UUID) ([]d
 	return s.repo.History(ctx, employeeID, 50)
 }
 
-// ConfirmActive — отметка "график подтверждён сейчас". Не создаёт новую версию,
-// а только обновляет last_confirmed_at на employees.
 func (s *ProfileService) ConfirmActive(ctx context.Context, employeeID uuid.UUID) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE employees SET last_confirmed_at = now() WHERE id = $1

@@ -1,7 +1,5 @@
-# WorkTime Sync — reverse proxy
-# В dev — слушаем :80, на проде раскоментируй секцию с доменом.
 
-# === DEV (localhost) ===
+
 :80 {
 	@api path /api/* /swagger* /healthz /metrics /ws/*
 	handle @api {
@@ -17,28 +15,3 @@
 	}
 }
 
-# === PROD (раскомментировать на VPS и заменить домен) ===
-# example.com {
-# 	@api path /api/* /swagger* /healthz /metrics /ws/*
-# 	handle @api {
-# 		reverse_proxy api:8080
-# 	}
-# 	handle {
-# 		reverse_proxy web:3000
-# 	}
-#
-# 	encode zstd gzip
-# 	log {
-# 		output file /data/access.log {
-# 			roll_size 10mb
-# 			roll_keep 5
-# 		}
-# 	}
-#
-# 	header {
-# 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-# 		X-Content-Type-Options "nosniff"
-# 		X-Frame-Options "SAMEORIGIN"
-# 		Referrer-Policy "strict-origin-when-cross-origin"
-# 	}
-# }

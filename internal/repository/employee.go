@@ -12,14 +12,12 @@ import (
 	"worktimesync/internal/domain"
 )
 
-// EmployeeRepo — доступ к employees.
 type EmployeeRepo struct {
 	pool *pgxpool.Pool
 }
 
 func NewEmployeeRepo(pool *pgxpool.Pool) *EmployeeRepo { return &EmployeeRepo{pool: pool} }
 
-// Create — создаёт минимальную запись employee для нового user.
 func (r *EmployeeRepo) Create(ctx context.Context, userID uuid.UUID) (*domain.Employee, error) {
 	row := r.pool.QueryRow(ctx, `
 		INSERT INTO employees (user_id)
@@ -36,7 +34,6 @@ func (r *EmployeeRepo) Create(ctx context.Context, userID uuid.UUID) (*domain.Em
 	return emp, nil
 }
 
-// ByUserID — получить employee по user_id.
 func (r *EmployeeRepo) ByUserID(ctx context.Context, userID uuid.UUID) (*domain.Employee, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, user_id, COALESCE(department, ''), COALESCE(position, ''),
@@ -58,8 +55,8 @@ func (r *EmployeeRepo) ByUserID(ctx context.Context, userID uuid.UUID) (*domain.
 
 func scanEmployee(s rowScanner) (*domain.Employee, error) {
 	var (
-		emp         domain.Employee
-		format      *string
+		emp    domain.Employee
+		format *string
 	)
 	if err := s.Scan(
 		&emp.ID, &emp.UserID, &emp.Department, &emp.Position,

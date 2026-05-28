@@ -15,14 +15,12 @@ import (
 	"worktimesync/internal/domain"
 )
 
-// UserRepo — доступ к users.
 type UserRepo struct {
 	pool *pgxpool.Pool
 }
 
 func NewUserRepo(pool *pgxpool.Pool) *UserRepo { return &UserRepo{pool: pool} }
 
-// CreateUserInput — входные данные для создания пользователя.
 type CreateUserInput struct {
 	Email        string
 	PasswordHash string
@@ -32,11 +30,8 @@ type CreateUserInput struct {
 	Locale       string
 }
 
-// ErrEmailTaken — попытка создать пользователя с уже существующим email.
 var ErrEmailTaken = errors.New("repository: email already taken")
 
-// Create — создаёт нового пользователя. Возвращает ErrEmailTaken
-// если email занят (PG unique violation 23505).
 func (r *UserRepo) Create(ctx context.Context, in CreateUserInput) (*domain.User, error) {
 	tz := in.Timezone
 	if tz == "" {
@@ -65,7 +60,6 @@ func (r *UserRepo) Create(ctx context.Context, in CreateUserInput) (*domain.User
 	return u, nil
 }
 
-// ByEmail — найти пользователя по email (case-insensitive).
 func (r *UserRepo) ByEmail(ctx context.Context, email string) (*domain.User, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, email, password_hash, role, full_name, timezone, locale,
@@ -84,9 +78,6 @@ func (r *UserRepo) ByEmail(ctx context.Context, email string) (*domain.User, err
 	return u, nil
 }
 
-// UpdateEmail — меняет email пользователя. Email нормализуется в lowercase.
-// Возвращает ErrEmailTaken при коллизии (PG unique violation 23505),
-// ErrNotFound если пользователь не существует.
 func (r *UserRepo) UpdateEmail(ctx context.Context, id uuid.UUID, newEmail string) error {
 	email := strings.ToLower(strings.TrimSpace(newEmail))
 	if email == "" {
@@ -109,7 +100,6 @@ func (r *UserRepo) UpdateEmail(ctx context.Context, id uuid.UUID, newEmail strin
 	return nil
 }
 
-// ByID — найти пользователя по UUID.
 func (r *UserRepo) ByID(ctx context.Context, id uuid.UUID) (*domain.User, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id, email, password_hash, role, full_name, timezone, locale,

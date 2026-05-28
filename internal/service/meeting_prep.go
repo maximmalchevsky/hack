@@ -1,8 +1,3 @@
-// MeetingPrepService — генерирует короткий бриф к встрече через GigaChat.
-// На вход — id события. На выход — markdown 3-5 предложений: о чём встреча,
-// что было на прошлых похожих, на что обратить внимание.
-//
-// Используется reminder-cron'ом за 15 минут до встречи.
 package service
 
 import (
@@ -26,18 +21,15 @@ func NewMeetingPrepService(pool *pgxpool.Pool, llm ai.Client) *MeetingPrepServic
 	return &MeetingPrepService{pool: pool, llm: llm}
 }
 
-// PrepContext — данные, которые скармливаем модели.
 type PrepContext struct {
 	Title          string    `json:"title"`
 	StartAt        time.Time `json:"start_at"`
 	EndAt          time.Time `json:"end_at"`
 	AttendeesCount int       `json:"attendees_count"`
 	Organizer      string    `json:"organizer"`
-	RecentTitles   []string  `json:"recent_titles"`   // похожие встречи за месяц
+	RecentTitles   []string  `json:"recent_titles"`
 }
 
-// Build — собирает бриф для события. Если LLM нет — возвращает пустую строку
-// (родитель тогда не добавит поле brief_md в payload — это OK).
 func (s *MeetingPrepService) Build(ctx context.Context, eventID uuid.UUID) (string, error) {
 	if s.llm == nil {
 		return "", nil
@@ -55,12 +47,10 @@ func (s *MeetingPrepService) Build(ctx context.Context, eventID uuid.UUID) (stri
 		return "", err
 	}
 
-	// Бриф нужен только для встреч 2+. Один-на-один сам себе — не нужен.
 	if c.AttendeesCount < 2 || strings.TrimSpace(c.Title) == "" {
 		return "", nil
 	}
 
-	// Похожие встречи: те же ключевые слова в title за последние 30 дней (без этого события).
 	rows, err := s.pool.Query(ctx, `
 		SELECT DISTINCT title FROM calendar_events
 		WHERE id <> $1
@@ -73,7 +63,6 @@ func (s *MeetingPrepService) Build(ctx context.Context, eventID uuid.UUID) (stri
 	`, eventID)
 	if err == nil {
 		defer rows.Close()
-		// Простой матчинг по common substrings (>= 4 символа).
 		key := strings.ToLower(c.Title)
 		recent := []string{}
 		for rows.Next() {
@@ -127,7 +116,6 @@ func hasOverlap(a, b string, minLen int) bool {
 	if len(a) < minLen || len(b) < minLen {
 		return false
 	}
-	// Ищем общую подстроку длиной >= minLen из слов a в b.
 	for _, w := range strings.Fields(a) {
 		if len(w) < minLen {
 			continue

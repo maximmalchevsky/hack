@@ -1,5 +1,3 @@
-// Package service — ReportPresetService: CRUD сохранённых пользователем
-// конфигураций отчётов для /reports/builder.
 package service
 
 import (
@@ -21,15 +19,12 @@ func NewReportPresetService(pool *pgxpool.Pool) *ReportPresetService {
 	return &ReportPresetService{pool: pool}
 }
 
-// ReportPresetFilters — JSON-структура filters в БД.
-// Все поля optional. Пустой массив departments = без фильтра.
 type ReportPresetFilters struct {
 	From        *time.Time `json:"from,omitempty"`
 	To          *time.Time `json:"to,omitempty"`
 	Departments []string   `json:"departments,omitempty"`
 }
 
-// ReportPreset — одна сохранённая конфигурация.
 type ReportPreset struct {
 	ID        uuid.UUID           `json:"id"`
 	UserID    uuid.UUID           `json:"user_id"`
@@ -47,7 +42,6 @@ var (
 	ErrPresetInvalid   = errors.New("report preset: invalid")
 )
 
-// validKinds — допустимые источники.
 var validKinds = map[string]struct{}{
 	"upcoming_vacations": {},
 	"stale_profiles":     {},
@@ -62,7 +56,6 @@ func validateKind(k string) error {
 	return nil
 }
 
-// List — все пресеты пользователя.
 func (s *ReportPresetService) List(ctx context.Context, userID uuid.UUID) ([]ReportPreset, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, user_id, name, kind, columns, filters, created_at, updated_at
@@ -86,7 +79,6 @@ func (s *ReportPresetService) List(ctx context.Context, userID uuid.UUID) ([]Rep
 	return out, rows.Err()
 }
 
-// Get — один пресет (с проверкой owner).
 func (s *ReportPresetService) Get(ctx context.Context, id, userID uuid.UUID) (*ReportPreset, error) {
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, user_id, name, kind, columns, filters, created_at, updated_at
@@ -105,7 +97,6 @@ func (s *ReportPresetService) Get(ctx context.Context, id, userID uuid.UUID) (*R
 	return &p, nil
 }
 
-// Create — новая запись.
 func (s *ReportPresetService) Create(ctx context.Context, userID uuid.UUID, p ReportPreset) (*ReportPreset, error) {
 	if p.Name == "" {
 		return nil, ErrPresetInvalid
@@ -132,7 +123,6 @@ func (s *ReportPresetService) Create(ctx context.Context, userID uuid.UUID, p Re
 	return s.Get(ctx, id, userID)
 }
 
-// Update — изменение существующего (только своего).
 func (s *ReportPresetService) Update(ctx context.Context, id, userID uuid.UUID, p ReportPreset) (*ReportPreset, error) {
 	existing, err := s.Get(ctx, id, userID)
 	if err != nil {
@@ -165,9 +155,7 @@ func (s *ReportPresetService) Update(ctx context.Context, id, userID uuid.UUID, 
 	return s.Get(ctx, id, userID)
 }
 
-// Delete — удаление своего.
 func (s *ReportPresetService) Delete(ctx context.Context, id, userID uuid.UUID) error {
-	// Сначала убеждаемся что наш.
 	if _, err := s.Get(ctx, id, userID); err != nil {
 		return err
 	}
@@ -175,14 +163,13 @@ func (s *ReportPresetService) Delete(ctx context.Context, id, userID uuid.UUID) 
 	return err
 }
 
-// scanPreset — общий разбор строки.
 type pgxScanner interface {
 	Scan(dest ...any) error
 }
 
 func scanPreset(s pgxScanner) (ReportPreset, error) {
 	var (
-		p              ReportPreset
+		p               ReportPreset
 		colsRaw, filRaw []byte
 	)
 	if err := s.Scan(&p.ID, &p.UserID, &p.Name, &p.Kind, &colsRaw, &filRaw, &p.CreatedAt, &p.UpdatedAt); err != nil {

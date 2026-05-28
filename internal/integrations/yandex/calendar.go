@@ -1,15 +1,3 @@
-// Package yandex — провайдер «Яндекс Календарь» через OAuth + CalDAV с Bearer auth.
-//
-// Поток:
-//
-//  1. UI открывает /api/v1/integrations/oauth/yandex/connect → backend генерит
-//     state, делает 302 на oauth.yandex.ru/authorize.
-//  2. Пользователь логинится, Яндекс перенаправляет на
-//     /api/v1/integrations/oauth/callback/yandex?code=...&state=...
-//  3. Backend меняет code на access_token + refresh_token (POST oauth.yandex.ru/token).
-//  4. Сохраняем интеграцию (provider='yandex_calendar') с зашифрованными токенами.
-//  5. FetchEvents использует CalDAV (caldav.yandex.ru) с заголовком
-//     Authorization: OAuth <access_token>. Этот формат принимает Yandex.
 package yandex
 
 import (
@@ -33,29 +21,21 @@ import (
 	"worktimesync/internal/integrations"
 )
 
-// calendarDataRE — ищет <*:calendar-data>...</*:calendar-data> в multistatus.
-// Yandex отдаёт ответ с префиксом cal: (или иногда без). Парсить через XML с
-// namespace в Go сложно из-за `xmlns:cal="..."` объявленного на корне, а на
-// элементе — только префикс. Regex проще и надёжнее.
 var calendarDataRE = regexp.MustCompile(`(?s)<(?:[a-zA-Z0-9]+:)?calendar-data[^>]*>(.*?)</(?:[a-zA-Z0-9]+:)?calendar-data>`)
 
 const (
-	authURL  = "https://oauth.yandex.ru/authorize"
-	tokenURL = "https://oauth.yandex.ru/token"
-	caldav   = "https://caldav.yandex.ru"
-	// Scope для Яндекс.Календаря (полный доступ) + чтение email пользователя
-	// чтобы знать чей это календарь.
+	authURL      = "https://oauth.yandex.ru/authorize"
+	tokenURL     = "https://oauth.yandex.ru/token"
+	caldav       = "https://caldav.yandex.ru"
 	defaultScope = "calendar:all login:email"
 )
 
-// Config — параметры OAuth-приложения, заданные в .env.
 type Config struct {
 	ClientID     string
 	ClientSecret string
 	RedirectURL  string
 }
 
-// Provider — реализация CalendarProvider для Яндекс Календаря.
 type Provider struct {
 	cfg        Config
 	httpClient *http.Client
@@ -70,7 +50,6 @@ func New(cfg Config) *Provider {
 
 func (p *Provider) Name() integrations.Provider { return integrations.ProviderYandexCalendar }
 
-// AuthURL — URL начала OAuth-flow, на который надо отправить пользователя.
 func (p *Provider) AuthURL(state string) string {
 	q := url.Values{}
 	q.Set("response_type", "code")
@@ -84,8 +63,6 @@ func (p *Provider) AuthURL(state string) string {
 	return authURL + "?" + q.Encode()
 }
 
-// Authenticate — обмен authorization_code на access_token + refresh_token.
-// authCode передаёт OAuth-callback handler.
 func (p *Provider) Authenticate(ctx context.Context, authCode string) (*integrations.Token, error) {
 	if authCode == "" {
 		return nil, errors.New("yandex: empty auth code")
@@ -105,13 +82,10 @@ func (p *Provider) Authenticate(ctx context.Context, authCode string) (*integrat
 		return nil, err
 	}
 
-	// Попробуем выяснить email пользователя через login.yandex.ru/info.
-	// Если не вышло — не страшно, integration просто будет без account_email.
 	tok.Raw["account_email"] = p.fetchUserEmail(ctx, tok.AccessToken)
 	return tok, nil
 }
 
-// RefreshToken — обновляет access_token по refresh_token.
 func (p *Provider) RefreshToken(ctx context.Context, t *integrations.Token) (*integrations.Token, error) {
 	if t == nil || t.RefreshToken == "" {
 		return nil, errors.New("yandex: empty refresh token")
@@ -124,7 +98,6 @@ func (p *Provider) RefreshToken(ctx context.Context, t *integrations.Token) (*in
 	return p.requestToken(ctx, form)
 }
 
-// FetchEvents — VEVENT-объекты за [from, to] через CalDAV с Bearer.
 func (p *Provider) FetchEvents(ctx context.Context, t *integrations.Token, from, to time.Time) ([]integrations.Event, error) {
 	if t == nil || t.AccessToken == "" {
 		return nil, errors.New("yandex: nil/empty access token")
@@ -149,13 +122,9 @@ func (p *Provider) FetchEvents(ctx context.Context, t *integrations.Token, from,
 		t.Raw["cal_path"] = calPath
 	}
 
-	// Не используем cd.Client.QueryCalendar — он падает на ETag-парсинге Яндекса
-	// (Yandex отдаёт ETag без кавычек, а go-webdav v0.7 требует quoted). Делаем
-	// REPORT вручную и парсим VCALENDAR через arran4/golang-ical.
 	return p.reportCalendar(ctx, t.AccessToken, calPath, from, to)
 }
 
-// reportCalendar — прямой REPORT calendar-query без зависимости от go-webdav-парсера.
 func (p *Provider) reportCalendar(ctx context.Context, accessToken, calPath string, from, to time.Time) ([]integrations.Event, error) {
 	body := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
 <c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
@@ -218,21 +187,11 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// discoverCalendar — три стратегии нахождения календаря пользователя в Yandex CalDAV.
-//
-// Auto-discovery от корня у Yandex не работает (PROPFIND `/` → 404 на
-// calendar-home-set). Поэтому идём:
-//
-//  1. FindCurrentUserPrincipal на webdav.Client → /principals/users/<email>/
-//     → FindCalendarHomeSet(principal) → FindCalendars(home).
-//  2. Если упало — конструируем home set из email: /calendars/<email>/.
-//  3. Если совсем не вышло — пробуем стандартные жёсткие пути по email.
 func (p *Provider) discoverCalendar(
 	ctx context.Context, httpClient webdav.HTTPClient, cdClient *cd.Client, t *integrations.Token,
 ) (string, error) {
 	email, _ := t.Raw["account_email"].(string)
 
-	// 1) Через principal — стандартный путь по RFC 5397.
 	wd, err := webdav.NewClient(httpClient, caldav)
 	if err == nil {
 		if principal, perr := wd.FindCurrentUserPrincipal(ctx); perr == nil && principal != "" {
@@ -244,7 +203,6 @@ func (p *Provider) discoverCalendar(
 		}
 	}
 
-	// 2) Yandex-специфика: /calendars/<email>/ — типичный home set.
 	if email != "" {
 		home := "/calendars/" + email + "/"
 		if path, lerr := pickFirstCalendar(ctx, cdClient, home); lerr == nil && path != "" {
@@ -263,28 +221,23 @@ func pickFirstCalendar(ctx context.Context, cdClient *cd.Client, home string) (s
 	if len(cals) == 0 {
 		return "", errors.New("no calendars in home set")
 	}
-	// Выбираем первый дефолтный/основной (или просто первый).
 	return cals[0].Path, nil
 }
 
-// CreateEventInput — параметры нового события для Yandex Календаря.
 type CreateEventInput struct {
 	Title       string
 	Description string
-	StartAt     time.Time // UTC
-	EndAt       time.Time // UTC
-	Attendees   []string  // email-адреса участников (необязательно)
-	Organizer   string    // email инициатора
+	StartAt     time.Time
+	EndAt       time.Time
+	Attendees   []string
+	Organizer   string
 }
 
-// CreateEventResult — что получилось при создании, в чём нуждается DeleteEvent.
 type CreateEventResult struct {
-	UID          string // UID события в ICS (используется как имя .ics-файла)
-	CalendarPath string // путь к календарю — нужен для DELETE
+	UID          string
+	CalendarPath string
 }
 
-// CreateEvent — создаёт событие в Yandex Календаре через CalDAV PUT.
-// Используется в paneли «Запланировать встречу» из AI-чата/scheduler.
 func (p *Provider) CreateEvent(ctx context.Context, t *integrations.Token, in CreateEventInput) (*CreateEventResult, error) {
 	if t == nil || t.AccessToken == "" {
 		return nil, errors.New("yandex: nil/empty access token")
@@ -293,7 +246,6 @@ func (p *Provider) CreateEvent(ctx context.Context, t *integrations.Token, in Cr
 		return nil, errors.New("yandex: end_at must be after start_at")
 	}
 
-	// Нужно знать путь к календарю — берём из token.Raw или дискаверим.
 	httpClient := withOAuthAuth(http.DefaultClient, t.AccessToken)
 	cdClient, err := cd.NewClient(httpClient, caldav)
 	if err != nil {
@@ -314,7 +266,6 @@ func (p *Provider) CreateEvent(ctx context.Context, t *integrations.Token, in Cr
 	uid := uuidLike()
 	ics := buildICS(uid, in)
 
-	// PUT /calendars/<email>/<calId>/<uid>.ics
 	endpoint := strings.TrimRight(caldav, "/") + "/" + strings.TrimLeft(calPath, "/") + uid + ".ics"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, strings.NewReader(ics))
 	if err != nil {
@@ -322,7 +273,7 @@ func (p *Provider) CreateEvent(ctx context.Context, t *integrations.Token, in Cr
 	}
 	req.Header.Set("Authorization", "OAuth "+t.AccessToken)
 	req.Header.Set("Content-Type", "text/calendar; charset=utf-8")
-	req.Header.Set("If-None-Match", "*") // создать только если нет
+	req.Header.Set("If-None-Match", "*")
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
@@ -336,9 +287,6 @@ func (p *Provider) CreateEvent(ctx context.Context, t *integrations.Token, in Cr
 	return &CreateEventResult{UID: uid, CalendarPath: calPath}, nil
 }
 
-// UpdateEvent — обновляет существующее событие через CalDAV PUT того же UID.
-// Без If-None-Match — наоборот, разрешаем перезапись. Принимает calPath
-// и uid (то, что вернул CreateEvent), и новые данные.
 func (p *Provider) UpdateEvent(ctx context.Context, t *integrations.Token, calPath, uid string, in CreateEventInput) error {
 	if t == nil || t.AccessToken == "" {
 		return errors.New("yandex: nil/empty access token")
@@ -358,8 +306,6 @@ func (p *Provider) UpdateEvent(ctx context.Context, t *integrations.Token, calPa
 	}
 	req.Header.Set("Authorization", "OAuth "+t.AccessToken)
 	req.Header.Set("Content-Type", "text/calendar; charset=utf-8")
-	// НЕТ If-None-Match — мы хотим перезаписать. NB: можно было бы слать
-	// If-Match с etag, но мы его не храним; полагаемся на серверный merge.
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
@@ -375,11 +321,6 @@ func (p *Provider) UpdateEvent(ctx context.Context, t *integrations.Token, calPa
 	}
 }
 
-// DeleteEvent — удаляет событие в Yandex Календаре через CalDAV DELETE.
-// Принимает путь к календарю и UID — как раз то, что вернул CreateEvent.
-//
-// Возвращает nil также на 404 (события уже нет — считаем удалённым), чтобы
-// idempotent cancel не падал, если пользователь удалил встречу в самом Яндексе.
 func (p *Provider) DeleteEvent(ctx context.Context, t *integrations.Token, calendarPath, uid string) error {
 	if t == nil || t.AccessToken == "" {
 		return errors.New("yandex: nil/empty access token")
@@ -405,7 +346,6 @@ func (p *Provider) DeleteEvent(ctx context.Context, t *integrations.Token, calen
 	case 200, 202, 204:
 		return nil
 	case 404, 410:
-		// Уже удалено — считаем успехом.
 		return nil
 	default:
 		raw, _ := io.ReadAll(resp.Body)
@@ -413,8 +353,6 @@ func (p *Provider) DeleteEvent(ctx context.Context, t *integrations.Token, calen
 	}
 }
 
-// uuidLike — короткий случайный ID для имени .ics. Не пытаемся быть строгим UUID v4,
-// этого хватит для уникальности в рамках одного календаря.
 func uuidLike() string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
 	var b [24]byte
@@ -462,7 +400,6 @@ func buildICS(uid string, in CreateEventInput) string {
 	return sb.String()
 }
 
-// icsEscape — экранирование текста для iCalendar RFC 5545.
 func icsEscape(s string) string {
 	s = strings.ReplaceAll(s, `\`, `\\`)
 	s = strings.ReplaceAll(s, ";", `\;`)
@@ -471,7 +408,6 @@ func icsEscape(s string) string {
 	return s
 }
 
-// RegisterWebhook / ParseWebhook — Яндекс CalDAV push не поддерживает.
 func (p *Provider) RegisterWebhook(_ context.Context, _ *integrations.Token, _ string) (string, error) {
 	return "", nil
 }
@@ -481,8 +417,6 @@ func (p *Provider) UnregisterWebhook(_ context.Context, _ *integrations.Token, _
 func (p *Provider) ParseWebhook(_ *http.Request) (*integrations.WebhookEvent, error) {
 	return nil, errors.New("yandex: webhooks not supported")
 }
-
-// --- internals ---
 
 func (p *Provider) requestToken(ctx context.Context, form url.Values) (*integrations.Token, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL,
@@ -529,7 +463,6 @@ func (p *Provider) requestToken(ctx context.Context, form url.Values) (*integrat
 	}, nil
 }
 
-// fetchUserEmail — best-effort, login.yandex.ru/info?format=json. Возвращает "" при ошибке.
 func (p *Provider) fetchUserEmail(ctx context.Context, accessToken string) string {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		"https://login.yandex.ru/info?format=json", nil)
@@ -557,8 +490,6 @@ func (p *Provider) fetchUserEmail(ctx context.Context, accessToken string) strin
 	}
 	return info.Login
 }
-
-// --- Bearer transport для CalDAV ---
 
 type oauthTransport struct {
 	token string

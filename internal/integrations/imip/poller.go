@@ -1,7 +1,3 @@
-// Package imip — кроме генератора .ics (см. builder.go), содержит IMAP-poller,
-// который проверяет inbox технического ящика и парсит METHOD:REPLY-письма
-// от Gmail/Apple/Outlook. По UID из VEVENT находит meeting_proposals.id,
-// по ATTENDEE.email — employee, и обновляет meeting_responses.status.
 package imip
 
 import (
@@ -19,18 +15,15 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// PollerConfig — креды + параметры опроса.
 type PollerConfig struct {
 	Host         string
 	Port         int
 	User         string
 	Pass         string
-	Mailbox      string        // по умолчанию INBOX
-	PollInterval time.Duration // обычно 60s
+	Mailbox      string
+	PollInterval time.Duration
 }
 
-// Poller — раз в PollInterval подключается к IMAP, читает непрочитанные
-// письма (UNSEEN), парсит .ics-приложения с METHOD:REPLY, обновляет БД.
 type Poller struct {
 	cfg  PollerConfig
 	pool *pgxpool.Pool
@@ -47,8 +40,6 @@ func NewPoller(cfg PollerConfig, pool *pgxpool.Pool, log zerolog.Logger) *Poller
 	return &Poller{cfg: cfg, pool: pool, log: log.With().Str("component", "imip-poller").Logger()}
 }
 
-// Run — блокирующий цикл: опрос каждые cfg.PollInterval, выход по ctx.Done().
-// Ошибки логируются, но не валят процесс — следующая итерация попробует снова.
 func (p *Poller) Run(ctx context.Context) {
 	p.log.Info().Str("host", p.cfg.Host).Int("port", p.cfg.Port).
 		Str("mailbox", p.cfg.Mailbox).Dur("interval", p.cfg.PollInterval).
@@ -57,7 +48,6 @@ func (p *Poller) Run(ctx context.Context) {
 	t := time.NewTicker(p.cfg.PollInterval)
 	defer t.Stop()
 
-	// Первый прогон сразу, не ждём первого тика.
 	p.tick(ctx)
 
 	for {
@@ -71,8 +61,6 @@ func (p *Poller) Run(ctx context.Context) {
 	}
 }
 
-// tick — одна итерация: подключиться, прочитать новые письма, обновить БД, выйти.
-// При любой ошибке — лог + return; следующий тик попробует снова.
 func (p *Poller) tick(ctx context.Context) {
 	addr := fmt.Sprintf("%s:%d", p.cfg.Host, p.cfg.Port)
 
@@ -94,7 +82,6 @@ func (p *Poller) tick(ctx context.Context) {
 		return
 	}
 
-	// Ищем непрочитанные письма.
 	criteria := &imap.SearchCriteria{
 		NotFlag: []imap.Flag{imap.FlagSeen},
 	}
@@ -109,7 +96,6 @@ func (p *Poller) tick(ctx context.Context) {
 	seqNums := data.AllSeqNums()
 	p.log.Debug().Int("count", len(seqNums)).Msg("found unread messages")
 
-	// Скачиваем тело каждого письма и парсим.
 	seqSet := imap.SeqSetNum(seqNums...)
 	fetchOpts := &imap.FetchOptions{
 		BodySection: []*imap.FetchItemBodySection{{}},
@@ -129,9 +115,6 @@ func (p *Poller) tick(ctx context.Context) {
 	}
 }
 
-// extractBody — берёт сырой текст письма из FetchMessageBuffer.
-// BodySection в FetchOptions = []*imap.FetchItemBodySection{{}} — это
-// весь raw body, как пришло.
 func extractBody(m *imapclient.FetchMessageBuffer) string {
 	for _, b := range m.BodySection {
 		if len(b.Bytes) > 0 {
@@ -141,8 +124,6 @@ func extractBody(m *imapclient.FetchMessageBuffer) string {
 	return ""
 }
 
-// handleMessage — ищет в теле блок BEGIN:VCALENDAR…END:VCALENDAR,
-// парсит как .ics, при METHOD:REPLY обновляет meeting_responses.
 func (p *Poller) handleMessage(ctx context.Context, raw string) {
 	ics, ok := extractCalendarBlock(raw)
 	if !ok {
@@ -157,13 +138,11 @@ func (p *Poller) handleMessage(ctx context.Context, raw string) {
 		return
 	}
 
-	// Маппим PARTSTAT → meeting_response_status.
 	status := mapPartstat(partstat)
 	if status == "" {
 		return
 	}
 
-	// Находим employee по email и обновляем meeting_responses.
 	tag, err := p.pool.Exec(ctx, `
 		UPDATE meeting_responses mr
 		SET status = $1::meeting_response_status, responded_at = now()
@@ -184,10 +163,6 @@ func (p *Poller) handleMessage(ctx context.Context, raw string) {
 	}
 }
 
-// extractCalendarBlock — вытаскивает из MIME-письма блок BEGIN:VCALENDAR..END.
-// Базовый подход без полного MIME-парсера: ищет границы блока в raw тексте.
-// Работает для большинства Gmail/Apple/Outlook REPLY-писем, потому что .ics
-// идёт как читаемый text/calendar блок (не base64).
 func extractCalendarBlock(raw string) (string, bool) {
 	start := strings.Index(raw, "BEGIN:VCALENDAR")
 	if start < 0 {
@@ -199,23 +174,16 @@ func extractCalendarBlock(raw string) (string, bool) {
 	}
 	end += start + len("END:VCALENDAR")
 	block := raw[start:end]
-	// Нормализуем переводы строк (RFC 5545 требует CRLF, но в MIME-теле
-	// часто LF). golang-ical берёт оба.
 	block = strings.ReplaceAll(block, "\r\n", "\n")
 	return block, true
 }
 
-// parseReply — парсит .ics с METHOD:REPLY и возвращает:
-//   - uid — VEVENT.UID, у нас всегда = meeting_proposals.id (UUID)
-//   - partstat — ACCEPTED / DECLINED / TENTATIVE / NEEDS-ACTION
-//   - attendeeEmail — кто ответил (берётся из ATTENDEE с mailto:)
 func parseReply(body string) (uid uuid.UUID, partstat, attendeeEmail string, err error) {
 	cal, perr := ics.ParseCalendar(strings.NewReader(body))
 	if perr != nil {
 		return uuid.Nil, "", "", fmt.Errorf("parse ics: %w", perr)
 	}
 
-	// Method должен быть REPLY (если REQUEST — это наше же письмо, отбрасываем).
 	method := ""
 	for _, p := range cal.CalendarProperties {
 		if strings.EqualFold(string(p.IANAToken), "METHOD") {
@@ -233,7 +201,6 @@ func parseReply(body string) (uid uuid.UUID, partstat, attendeeEmail string, err
 	}
 	ev := events[0]
 
-	// UID.
 	uidProp := ev.GetProperty(ics.ComponentPropertyUniqueId)
 	if uidProp == nil {
 		return uuid.Nil, "", "", errors.New("missing UID")
@@ -243,15 +210,12 @@ func parseReply(body string) (uid uuid.UUID, partstat, attendeeEmail string, err
 		return uuid.Nil, "", "", fmt.Errorf("invalid uid: %w", err)
 	}
 
-	// ATTENDEE — берём первого с PARTSTAT (в REPLY обычно один — тот, кто ответил).
 	for _, prop := range ev.Properties {
 		if !strings.EqualFold(string(prop.IANAToken), "ATTENDEE") {
 			continue
 		}
-		// Value = "mailto:user@example.com"
 		email := strings.TrimSpace(strings.TrimPrefix(prop.Value, "mailto:"))
 		email = strings.TrimPrefix(email, "MAILTO:")
-		// PARTSTAT — параметр attendee.
 		if ps, ok := prop.ICalParameters["PARTSTAT"]; ok && len(ps) > 0 {
 			return uid, strings.ToUpper(ps[0]), email, nil
 		}
@@ -259,8 +223,6 @@ func parseReply(body string) (uid uuid.UUID, partstat, attendeeEmail string, err
 	return uuid.Nil, "", "", errors.New("no attendee with PARTSTAT")
 }
 
-// mapPartstat — PARTSTAT (из RFC 5545) → meeting_response_status (наш enum).
-// Если что-то непонятное — пустая строка, и мы НЕ трогаем строку в БД.
 func mapPartstat(partstat string) string {
 	switch strings.ToUpper(partstat) {
 	case "ACCEPTED":
@@ -268,7 +230,6 @@ func mapPartstat(partstat string) string {
 	case "DECLINED":
 		return "declined"
 	case "TENTATIVE":
-		// «Возможно» — оставляем pending, чтобы не обманывать инициатора.
 		return "pending"
 	default:
 		return ""
