@@ -259,7 +259,7 @@ const demoPassword = "qwerty12345"
 
 func demoPeople() []demoPerson {
 	return []demoPerson{
-		{Email: "malchevsky@iqj.app", FullName: "Максим Малчевский", Role: "employee",
+		{Email: "maxim@iqj.app", FullName: "Максим Малчевский", Role: "employee",
 			Department: "Platform", Position: "Backend-инженер", HRFormat: "hybrid",
 			Timezone: "Europe/Moscow", DaysShift: 3, WorkFormat: "hybrid",
 			HoursStart: "10:00", HoursEnd: "19:00"},
@@ -401,7 +401,7 @@ type demoTeam struct {
 func demoTeams() []demoTeam {
 	return []demoTeam{
 		{Name: "Platform", OwnerEmail: "igor@worktime.local",
-			MemberEmails: []string{"malchevsky@iqj.app", "igor@worktime.local", "plamadil@worktime.local"}},
+			MemberEmails: []string{"maxim@iqj.app", "igor@worktime.local", "plamadil@worktime.local"}},
 		{Name: "Product", OwnerEmail: "zharov@iqj.app",
 			MemberEmails: []string{"zharov@iqj.app", "yermolina@iqj.app", "postnikov@iqj.app"}},
 		{Name: "Distributed", OwnerEmail: "petrov@worktime.local",
