@@ -186,11 +186,24 @@ func (s *RecommendationService) ComputeMetrics(ctx context.Context, employeeID u
 }
 
 // persistSnapshot — пишет одну строку в metrics_snapshots. Лучше делать best-effort:
+// currentWeekRange — [Пн 00:00 текущей недели, след. Пн 00:00) в UTC.
+// Ровно 7 дней. Используется как окно метрик C/L/Z/H, чтобы они совпадали
+// с heatmap «Моя неделя» на /workload.
+func currentWeekRange(now time.Time) (time.Time, time.Time) {
+	wd := int(now.Weekday())
+	if wd == 0 {
+		wd = 7 // воскресенье → 7-й день недели
+	}
+	from := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).
+		AddDate(0, 0, -(wd - 1))
+	return from, from.AddDate(0, 0, 7)
+}
+
 // если запись упала, метрика всё равно отдана клиенту (и закэширована в Redis).
-// period — последние 30 дней до now(), это окно по умолчанию для C/L/Z.
+// period — текущая календарная неделя (Пн—Вс), окно по умолчанию для C/L/Z.
 func (s *RecommendationService) persistSnapshot(ctx context.Context, employeeID uuid.UUID, m ai.Metrics) {
 	now := time.Now().UTC()
-	periodStart := now.AddDate(0, 0, -30)
+	periodStart, _ := currentWeekRange(now)
 	_, _ = s.pool.Exec(ctx, `
 		INSERT INTO metrics_snapshots
 			(employee_id, computed_at, period_start, period_end,
@@ -251,10 +264,12 @@ func (s *RecommendationService) empSnapshot(ctx context.Context, employeeID uuid
 	}
 	snap.LastProfileUpdateDaysAgo = daysAgo
 
-	// Реальные метрики A/C/L.
+	// Реальные метрики A/C/L — за ТЕКУЩУЮ календарную неделю (Пн 00:00 — Вс 24:00).
+	// Раньше окно было [-30, +7] дней: знаменатель Load (рабочие часы за ~37 дней)
+	// раздувался пустыми прошлыми днями, и L/C не совпадали с heatmap «Моя неделя»,
+	// который показывает именно текущую неделю. Сужено до недели для консистентности.
 	now := time.Now().UTC()
-	from := now.AddDate(0, 0, -30)
-	to := now.AddDate(0, 0, 7)
+	from, to := currentWeekRange(now)
 
 	events, err := s.events.List(ctx, repository.ListEventsFilter{
 		EmployeeID: employeeID,
