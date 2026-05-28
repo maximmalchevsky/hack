@@ -102,6 +102,31 @@
 	let scrollEl: HTMLDivElement | null = $state(null);
 	let bottomAnchor: HTMLDivElement | null = $state(null);
 
+	// autoStick — «прилипание» к низу. true пока пользователь внизу списка.
+	// Если он отлистал вверх (читает историю) — становится false, и автоскролл
+	// его не дёргает. Возвращается в true как только долистал до низа.
+	let autoStick = $state(true);
+
+	function onScrollList() {
+		if (!scrollEl) return;
+		const dist = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight;
+		autoStick = dist < 80; // в пределах ~80px от низа считаем «прилип»
+	}
+
+	// Автоскролл вниз при любом изменении сообщений (новое сообщение, дельта
+	// стрима, появление action-кнопок). $effect запускается ПОСЛЕ DOM-патча,
+	// поэтому scrollHeight уже актуальный — текст не «убегает» за кадр.
+	$effect(() => {
+		// Трекаем длину списка и длину контента последнего сообщения (для стрима).
+		const n = messages.length;
+		const lastLen = n > 0 ? messages[n - 1].content.length : 0;
+		void n;
+		void lastLen;
+		if (autoStick && scrollEl) {
+			scrollEl.scrollTop = scrollEl.scrollHeight;
+		}
+	});
+
 	// Состояние flow «запланировать встречу».
 	let flowDurationMin = $state(60);
 
@@ -185,6 +210,9 @@
 	async function send(text?: string) {
 		const msg = (text ?? input).trim();
 		if (!msg || sending) return;
+		// Юзер отправил сообщение → принудительно «прилипаем» к низу,
+		// даже если до этого листал историю вверх.
+		autoStick = true;
 		messages.push(newMsg({ role: 'user', content: msg }));
 		input = '';
 		error = null;
@@ -1573,7 +1601,7 @@
 
 <div class="grid-2-1" style="height: calc(100vh - 200px);">
 	<Card padded={false} title="Чат">
-		<div bind:this={scrollEl} style="height: calc(100% - 80px); overflow-y: auto; padding: 12px;">
+		<div bind:this={scrollEl} onscroll={onScrollList} style="height: calc(100% - 80px); overflow-y: auto; padding: 12px;">
 			{#if messages.length === 0}
 				<div class="text-text-3 text-sm" style="text-align: center; padding: 32px;">
 					Введите вопрос или выберите шаблон
