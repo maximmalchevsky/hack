@@ -13,6 +13,7 @@
 		listMyEvents,
 		getWeeklySummary,
 		setEventCategory,
+		setEventTitle,
 		type CalendarEvent,
 		type WeeklySummary
 	} from '$lib/api/profile';
@@ -576,6 +577,38 @@
 		}
 	}
 
+	// --- Inline-редактирование названия встречи ---
+	let titleEditingId = $state<string | null>(null);
+	let titleDraft = $state('');
+	let titleSaving = $state<string | null>(null);
+
+	function startTitleEdit(eventID: string, current: string) {
+		titleEditingId = eventID;
+		titleDraft = current;
+	}
+
+	async function onTitleSave(eventID: string) {
+		const t = titleDraft.trim();
+		if (!t) {
+			titleEditingId = null;
+			return;
+		}
+		titleSaving = eventID;
+		try {
+			await setEventTitle(eventID, t);
+			events = events.map((ev) => (ev.id === eventID ? { ...ev, title: t } : ev));
+			titleEditingId = null;
+		} catch (e) {
+			if (e instanceof ApiError && e.status === 404) {
+				error = 'Это событие нельзя переименовать (не ваше)';
+			} else {
+				error = e instanceof ApiError ? e.message : String(e);
+			}
+		} finally {
+			titleSaving = null;
+		}
+	}
+
 	// --- Stat-карточки ---
 	// Считаем по видимым событиям — чтобы цифры отражали выбранные источники.
 
@@ -873,6 +906,50 @@
 								{#if isOpen}
 									<div class="ev-full__details">
 										<dl class="ev-full__props">
+											<dt>Название</dt>
+											<dd class="ev-full__name-edit">
+												{#if titleEditingId === e.id}
+													<input
+														type="text"
+														class="ev-full__name-input"
+														bind:value={titleDraft}
+														disabled={titleSaving === e.id}
+														onkeydown={(ke) => {
+															if (ke.key === 'Enter') onTitleSave(e.id);
+															if (ke.key === 'Escape') (titleEditingId = null);
+														}}
+													/>
+													<button
+														type="button"
+														class="ev-full__name-btn ev-full__name-btn--save"
+														onclick={() => onTitleSave(e.id)}
+														disabled={titleSaving === e.id}
+														title="Сохранить"
+													>
+														<i class="ti ti-check"></i>
+													</button>
+													<button
+														type="button"
+														class="ev-full__name-btn"
+														onclick={() => (titleEditingId = null)}
+														disabled={titleSaving === e.id}
+														title="Отмена"
+													>
+														<i class="ti ti-x"></i>
+													</button>
+												{:else}
+													<span>{e.title}</span>
+													<button
+														type="button"
+														class="ev-full__name-btn"
+														onclick={() => startTitleEdit(e.id, e.title)}
+														title="Переименовать"
+													>
+														<i class="ti ti-pencil"></i>
+													</button>
+												{/if}
+											</dd>
+
 											<dt>Тип</dt>
 											<dd>
 												<Badge variant={kindBadge(e.kind)}>{kindLabel(e.kind)}</Badge>
@@ -1307,6 +1384,43 @@
 			grid-template-columns: 1fr;
 			gap: 6px;
 		}
+	}
+
+	.ev-full__name-edit {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		flex-wrap: wrap;
+	}
+	.ev-full__name-input {
+		padding: 3px 8px;
+		font-size: 13px;
+		border: 0.5px solid var(--border);
+		border-radius: 4px;
+		background: var(--bg);
+		color: var(--text);
+		min-width: 220px;
+	}
+	.ev-full__name-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 22px;
+		height: 22px;
+		padding: 0;
+		border: 0;
+		border-radius: 4px;
+		background: transparent;
+		color: var(--text-3);
+		cursor: pointer;
+	}
+	.ev-full__name-btn:hover {
+		background: var(--surface-2);
+		color: var(--text);
+	}
+	.ev-full__name-btn--save {
+		background: var(--info-bg);
+		color: var(--info-strong);
 	}
 
 	.ev-full__time {

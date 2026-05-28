@@ -91,6 +91,42 @@ func (h *MeHandler) SetEventCategory(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"ok": true, "category": req.Category})
 }
 
+// setEventTitleRequest — body для PATCH /me/events/:id/title.
+type setEventTitleRequest struct {
+	Title string `json:"title"`
+}
+
+// SetEventTitle — переименовывает событие текущего сотрудника. Только своё
+// (employee_id из JWT). Пустое название отклоняем.
+func (h *MeHandler) SetEventTitle(c fiber.Ctx) error {
+	empID := middleware.EmployeeID(c)
+	if empID == uuid.Nil {
+		return fiber.NewError(fiber.StatusBadRequest, "no employee linked to user")
+	}
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid event id")
+	}
+	var req setEventTitleRequest
+	if err := json.Unmarshal(c.Body(), &req); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid body")
+	}
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "title cannot be empty")
+	}
+	if len(title) > 200 {
+		title = title[:200]
+	}
+	if err := h.events.SetTitle(c.Context(), id, empID, title); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return fiber.NewError(fiber.StatusNotFound, "event not found")
+		}
+		return err
+	}
+	return c.JSON(fiber.Map{"ok": true, "title": title})
+}
+
 // Events — GET /api/v1/me/events?from=...&to=...
 // События календаря текущего сотрудника за диапазон. По умолчанию — последние
 // 7 дней + следующие 7 дней.

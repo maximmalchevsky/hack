@@ -72,6 +72,29 @@ func Run(ctx context.Context, db *pgxpool.Pool, enq Enqueuer, log zerolog.Logger
 // только при успешном push в Yandex; встречи без Yandex-интеграции
 // у инициатора были невидимы в /dashboard, /workload, find-window.
 func backfillMeetingEvents(ctx context.Context, db *pgxpool.Pool, log zerolog.Logger) error {
+	// 0. Чистим дубли: если встреча запушена в Yandex (есть meeting_pushes),
+	// то она уже попадает в calendar_events через CalDAV-sync (с integration_id).
+	// Наш native-дубль (integration_id IS NULL, source 'meeting-…') тогда лишний —
+	// удаляем его, чтобы в /dashboard и /workload не было двух одинаковых встреч.
+	if tag, err := db.Exec(ctx, `
+		DELETE FROM calendar_events ce
+		WHERE ce.integration_id IS NULL
+		  AND ce.source_event_id LIKE 'meeting-%'
+		  AND EXISTS (
+		      SELECT 1 FROM meeting_pushes mpu
+		      WHERE mpu.deleted_at IS NULL
+		        AND ce.source_event_id =
+		            'meeting-' || mpu.meeting_id::text || '-' || mpu.employee_id::text
+		  )
+	`); err != nil {
+		return err
+	} else if n := tag.RowsAffected(); n > 0 {
+		log.Info().Int64("count", n).Msg("bootstrap: removed duplicate native meeting events (have Yandex push)")
+	}
+
+	// 1. Создаём native calendar_event для встреч инициатора, у которых нет
+	// НИ native-события, НИ Yandex-push'а. Без второго условия мы плодили бы
+	// дубль рядом с Yandex-версией.
 	tag, err := db.Exec(ctx, `
 		INSERT INTO calendar_events
 			(employee_id, integration_id, source_event_id, title, description,
@@ -94,6 +117,12 @@ func backfillMeetingEvents(ctx context.Context, db *pgxpool.Pool, log zerolog.Lo
 		      SELECT 1 FROM calendar_events ce
 		      WHERE ce.integration_id IS NULL
 		        AND ce.source_event_id = 'meeting-' || mp.id::text || '-' || mp.initiator_emp::text
+		  )
+		  AND NOT EXISTS (
+		      SELECT 1 FROM meeting_pushes mpu
+		      WHERE mpu.meeting_id = mp.id
+		        AND mpu.employee_id = mp.initiator_emp
+		        AND mpu.deleted_at IS NULL
 		  )
 	`)
 	if err != nil {

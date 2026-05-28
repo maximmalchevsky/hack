@@ -30,6 +30,13 @@ export const setEventCategory = (eventID: string, category: string) =>
 		{ category }
 	);
 
+// setEventTitle — переименовывает своё событие. Пустое название бэк отклонит.
+export const setEventTitle = (eventID: string, title: string) =>
+	api.patch<{ ok: boolean; title: string }>(
+		`/api/v1/me/events/${eventID}/title`,
+		{ title }
+	);
+
 export interface DayHours {
 	start: string;
 	end: string;

@@ -157,6 +157,28 @@ func (r *CalendarEventRepo) SetCategory(
 	return nil
 }
 
+// SetTitle — меняет название события. Проверяет принадлежность сотруднику.
+// Пустую строку не принимаем (валидируется в handler), здесь дополнительная
+// защита — NULLIF не ставим, title NOT NULL.
+func (r *CalendarEventRepo) SetTitle(
+	ctx context.Context,
+	eventID, employeeID uuid.UUID,
+	title string,
+) error {
+	tag, err := r.pool.Exec(ctx, `
+		UPDATE calendar_events
+		SET title = $1
+		WHERE id = $2 AND employee_id = $3
+	`, title, eventID, employeeID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (r *CalendarEventRepo) Count(ctx context.Context, employeeID uuid.UUID, from, to time.Time) (int, error) {
 	var n int
 	err := r.pool.QueryRow(ctx, `

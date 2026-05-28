@@ -217,6 +217,7 @@ func (s *Server) registerRoutes() {
 	authed.Get("/me", meH.Get)
 	authed.Get("/me/events", meH.Events)
 	authed.Patch("/me/events/:id/category", meH.SetEventCategory)
+	authed.Patch("/me/events/:id/title", meH.SetEventTitle)
 	authed.Get("/me/weekly-summary", meH.WeeklySummary)
 	authed.Get("/me/notification-prefs", meH.NotificationPrefs)
 	authed.Patch("/me/notification-prefs", meH.UpdateNotificationPrefs)
