@@ -172,8 +172,6 @@ func pickScenario(email string) string {
 		return "tzdrift"
 	case "daniil@iqj.app": // Даниил Игаев (LIS, HR-mismatch)
 		return "hr_mismatch"
-	case "maxim@iqj.app": // Максим Малчевский
-		return "weekend_burn"
 	case "petrov@worktime.local": // Александр Петров (аналитик)
 		return "sparse"
 	default:
