@@ -168,13 +168,13 @@ func pickScenario(email string) string {
 	switch email {
 	case "igor@worktime.local": // Игорь Климов
 		return "overloaded"
-	case "oleg@worktime.local": // Олег Пламадил (NSK, TZ-drift)
+	case "plamadil@worktime.local": // Олег Пламадил (NSK, TZ-drift)
 		return "tzdrift"
-	case "daniil.i@worktime.local": // Даниил Игаев (LIS, HR-mismatch)
+	case "daniil@iqj.app": // Даниил Игаев (LIS, HR-mismatch)
 		return "hr_mismatch"
-	case "maxim@worktime.local": // Максим Малчевский
+	case "malchevsky@iqj.app": // Максим Малчевский
 		return "weekend_burn"
-	case "alexandr@worktime.local": // Александр Петров (аналитик)
+	case "petrov@worktime.local": // Александр Петров (аналитик)
 		return "sparse"
 	default:
 		return "healthy"
