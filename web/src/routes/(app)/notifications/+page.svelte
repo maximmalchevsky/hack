@@ -69,7 +69,7 @@
 	<div>
 		<h1>Уведомления</h1>
 		<div class="page-header__subtitle">
-			Непрочитанных: {$notifications.unread}{#if !$notifications.connected} · подключение прервано{/if}
+			Непрочитанных: {$notifications.unread}
 		</div>
 	</div>
 	<div class="page-header__actions">
